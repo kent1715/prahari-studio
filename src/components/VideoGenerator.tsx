@@ -90,23 +90,30 @@ export default function VideoGenerator({
           ollamaModel: project.ollamaModel
         })
       });
-      if (res.ok) {
-        const data = await res.json();
-        setIdeas(data.ideas);
-        if (data.message) {
-          setIdeasMessage(data.message);
-        } else if (data.mode === "simulation") {
-          setIdeasMessage("Mode Simulasi: Hubungkan kunci API Gemini Anda untuk respon dinamis.");
-        } else if (data.mode === "ollama") {
-          setIdeasMessage(`Selesai diproses via Ollama lokal (${project.ollamaModel || "llama3"})!`);
-        }
-        // Save to project
-        onUpdateProject({
-          ...project,
-          niche: topicPrompt,
-          ideas: data.ideas
-        });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || `HTTP error! Status: ${res.status}`);
       }
+
+      const generatedIdeas = Array.isArray(data.ideas) ? data.ideas : [];
+      setIdeas(generatedIdeas);
+
+      if (data.message) {
+        setIdeasMessage(data.message);
+      } else if (data.mode === "simulation") {
+        setIdeasMessage("Mode Simulasi: Hubungkan kunci API Gemini Anda untuk respon dinamis.");
+      } else if (data.mode === "ollama") {
+        setIdeasMessage(`Selesai diproses via Ollama lokal (${project.ollamaModel || "llama3"})!`);
+      }
+
+      // Save to project
+      onUpdateProject({
+        ...project,
+        niche: topicPrompt,
+        ideas: generatedIdeas
+      });
     } catch (e: any) {
       setIdeasMessage("Gagal memanggil API: " + e.message);
     } finally {
@@ -147,32 +154,36 @@ export default function VideoGenerator({
           ollamaModel: project.ollamaModel
         })
       });
-      if (res.ok) {
-        const data = await res.json();
-        const sc = data.script;
-        if (data.message) {
-          showToast(data.message);
-        }
-        setScriptText({
-          hook: sc.hook,
-          intro: sc.intro,
-          mainStory: sc.mainStory,
-          cta: sc.cta,
-        });
 
-        onUpdateProject({
-          ...project,
-          script: {
-            hook: sc.hook,
-            intro: sc.intro,
-            mainStory: sc.mainStory,
-            cta: sc.cta,
-            fullText: sc.fullText || `${sc.hook}\n\n${sc.intro}\n\n${sc.mainStory}\n\n${sc.cta}`
-          }
-        });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || `HTTP error! Status: ${res.status}`);
       }
-    } catch (e) {
-      showToast("Gagal memproses hasil generate naskah.", "error");
+
+      const sc = data.script || { hook: "", intro: "", mainStory: "", cta: "", fullText: "" };
+      if (data.message) {
+        showToast(data.message);
+      }
+      setScriptText({
+        hook: sc.hook || "",
+        intro: sc.intro || "",
+        mainStory: sc.mainStory || "",
+        cta: sc.cta || "",
+      });
+
+      onUpdateProject({
+        ...project,
+        script: {
+          hook: sc.hook || "",
+          intro: sc.intro || "",
+          mainStory: sc.mainStory || "",
+          cta: sc.cta || "",
+          fullText: sc.fullText || `${sc.hook || ""}\n\n${sc.intro || ""}\n\n${sc.mainStory || ""}\n\n${sc.cta || ""}`
+        }
+      });
+    } catch (e: any) {
+      showToast("Gagal: " + e.message, "error");
     } finally {
       setLoadingScript(false);
     }
@@ -200,25 +211,30 @@ export default function VideoGenerator({
           ollamaModel: project.ollamaModel
         })
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.message) {
-          showToast(data.message);
-        }
-        const mappedScenes = data.scenes.map((s: any) => ({
-          ...s,
-          duration: selectedDuration,
-          videoStatus: "pending",
-          videoProgress: 0
-        }));
-        setStoryboardScenes(mappedScenes);
-        onUpdateProject({
-          ...project,
-          storyboard: mappedScenes
-        });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || `HTTP error! Status: ${res.status}`);
       }
-    } catch (e) {
-      showToast("Gagal membagi naskah menjadi storyboard.", "error");
+
+      if (data.message) {
+        showToast(data.message);
+      }
+      const rawScenes = Array.isArray(data.scenes) ? data.scenes : [];
+      const mappedScenes = rawScenes.map((s: any) => ({
+        ...s,
+        duration: selectedDuration,
+        videoStatus: "pending",
+        videoProgress: 0
+      }));
+      setStoryboardScenes(mappedScenes);
+      onUpdateProject({
+        ...project,
+        storyboard: mappedScenes
+      });
+    } catch (e: any) {
+      showToast("Gagal: " + e.message, "error");
     } finally {
       setLoadingStoryboard(false);
     }
@@ -238,19 +254,24 @@ export default function VideoGenerator({
           ollamaModel: project.ollamaModel
         })
       });
-      if (res.ok) {
-        const data = await res.json();
-        const updated = storyboardScenes.map((sz) => {
-          if (sz.id === sceneId) {
-            return { ...sz, enhancedPrompt: data.enhancedPrompt };
-          }
-          return sz;
-        });
-        setStoryboardScenes(updated);
-        onUpdateProject({ ...project, storyboard: updated });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.message || `HTTP error! Status: ${res.status}`);
       }
-    } catch (e) {
+
+      const updated = storyboardScenes.map((sz) => {
+        if (sz.id === sceneId) {
+          return { ...sz, enhancedPrompt: data.enhancedPrompt || sz.prompt };
+        }
+        return sz;
+      });
+      setStoryboardScenes(updated);
+      onUpdateProject({ ...project, storyboard: updated });
+    } catch (e: any) {
       console.error(e);
+      showToast("Gagal: " + e.message, "error");
     } finally {
       setEnhancingSceneId(null);
     }
@@ -497,7 +518,7 @@ export default function VideoGenerator({
         </div>
 
         {/* List of generated ideas */}
-        {ideas.length > 0 && (
+        {ideas && Array.isArray(ideas) && ideas.length > 0 && (
           <div className="bg-[#121214] border border-[#232329] rounded-xl p-4 space-y-3">
             <h4 className="text-xs font-mono text-neutral-300 border-b border-[#232329] pb-1.5 uppercase tracking-wider">Ide Judul Viral</h4>
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 text-xs">
