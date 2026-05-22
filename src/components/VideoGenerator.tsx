@@ -50,14 +50,21 @@ export default function VideoGenerator({
           niche: topicPrompt,
           language: project.language,
           style: project.style,
-          audience: targetAudience
+          audience: targetAudience,
+          llmProvider: project.llmProvider,
+          ollamaUrl: project.ollamaUrl,
+          ollamaModel: project.ollamaModel
         })
       });
       if (res.ok) {
         const data = await res.json();
         setIdeas(data.ideas);
-        if (data.mode === "simulation") {
+        if (data.message) {
+          setIdeasMessage(data.message);
+        } else if (data.mode === "simulation") {
           setIdeasMessage("Mode Simulasi: Hubungkan kunci API Gemini Anda untuk respon dinamis.");
+        } else if (data.mode === "ollama") {
+          setIdeasMessage(`Selesai diproses via Ollama lokal (${project.ollamaModel || "llama3"})!`);
         }
         // Save to project
         onUpdateProject({
@@ -99,12 +106,18 @@ export default function VideoGenerator({
           niche: topicPrompt || project.niche,
           style: project.style,
           language: project.language,
-          voiceEmotion: project.voiceEmotion
+          voiceEmotion: project.voiceEmotion,
+          llmProvider: project.llmProvider,
+          ollamaUrl: project.ollamaUrl,
+          ollamaModel: project.ollamaModel
         })
       });
       if (res.ok) {
         const data = await res.json();
         const sc = data.script;
+        if (data.message) {
+          alert(data.message);
+        }
         setScriptText({
           hook: sc.hook,
           intro: sc.intro,
@@ -144,11 +157,17 @@ export default function VideoGenerator({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fullText,
-          style: project.style
+          style: project.style,
+          llmProvider: project.llmProvider,
+          ollamaUrl: project.ollamaUrl,
+          ollamaModel: project.ollamaModel
         })
       });
       if (res.ok) {
         const data = await res.json();
+        if (data.message) {
+          alert(data.message);
+        }
         const mappedScenes = data.scenes.map((s: any) => ({
           ...s,
           duration: selectedDuration,
@@ -175,7 +194,12 @@ export default function VideoGenerator({
       const res = await fetch("/api/enhance-prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: currentPrompt })
+        body: JSON.stringify({
+          prompt: currentPrompt,
+          llmProvider: project.llmProvider,
+          ollamaUrl: project.ollamaUrl,
+          ollamaModel: project.ollamaModel
+        })
       });
       if (res.ok) {
         const data = await res.json();

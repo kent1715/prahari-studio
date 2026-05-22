@@ -17,8 +17,87 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
 
   return (
     <div id="settings-audio-sub" className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-      {/* Sound overlay settings */}
+      {/* Sound overlay & LLM settings */}
       <div className="space-y-6">
+        {/* LLM Engine Control */}
+        <div className="bg-[#121214] border border-[#232329] rounded-xl p-4 space-y-4">
+          <div className="flex items-center gap-2 border-b border-[#232329] pb-2">
+            <Zap className="h-4 w-4 text-[#ff5a1f]" />
+            <h3 className="font-sans font-medium text-white text-xs uppercase tracking-wider">Mesin Kecerdasan Buatan (LLM Engine)</h3>
+          </div>
+
+          <div className="space-y-4 text-xs">
+            <div className="space-y-1.5 align-middle">
+              <label className="block text-[11px] font-mono text-neutral-400 uppercase tracking-widest">Penyedia Model AI (Text & Script Generator)</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={() => onUpdateProject({ ...project, llmProvider: "gemini" })}
+                  className={`p-2.5 rounded-lg text-left transition-all cursor-pointer border ${
+                    project.llmProvider !== "ollama"
+                      ? "bg-[#ff5a1f]/10 border-[#ff5a1f] text-white"
+                      : "bg-[#1c1c21] border-[#2d2d37] text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  <span className="block font-medium text-xs">Gemini API (Cloud AI)</span>
+                  <span className="text-[9px] text-neutral-400 block mt-0.5 leading-tight">Kecepatan tinggi melalui Google Cloud</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onUpdateProject({ ...project, llmProvider: "ollama" })}
+                  className={`p-2.5 rounded-lg text-left transition-all cursor-pointer border ${
+                    project.llmProvider === "ollama"
+                      ? "bg-[#ff5a1f]/10 border-[#ff5a1f] text-white"
+                      : "bg-[#1c1c21] border-[#2d2d37] text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  <span className="block font-medium text-xs">Ollama (Offline Lokal)</span>
+                  <span className="text-[9px] text-neutral-400 block mt-0.5 leading-tight">Optimalkan raw power RTX A2000 Anda</span>
+                </button>
+              </div>
+            </div>
+
+            {project.llmProvider === "ollama" && (
+              <div className="space-y-3 p-3 bg-[#17171d] rounded-lg border border-[#202026] duration-150">
+                <div className="flex items-start gap-1.5 text-[10px] text-[#ff5a1f] leading-normal bg-[#ff5a1f]/5 p-2 rounded">
+                  <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                  <span>
+                    Pastikan Anda telah menjalankan perintah <code>ollama run llama3</code> di komputer desktop local Anda (RTX A2000) agar server offline merespon kueri.
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-mono text-neutral-400 uppercase">Endpoint URI Ollama Host</label>
+                  <input
+                    type="text"
+                    className="w-full bg-[#101014] border border-[#2d2d37] rounded px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-[#ff5a1f]"
+                    value={project.ollamaUrl || "http://127.0.0.1:11434"}
+                    onChange={(e) => onUpdateProject({ ...project, ollamaUrl: e.target.value })}
+                    placeholder="http://127.0.0.1:11434"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-mono text-neutral-400 uppercase">Model Identifier</label>
+                  <select
+                    className="w-full bg-[#101014] border border-[#2d2d37] rounded px-3 py-1.5 text-white font-mono text-sm focus:outline-none focus:border-[#ff5a1f]"
+                    value={project.ollamaModel || "llama3"}
+                    onChange={(e) => onUpdateProject({ ...project, ollamaModel: e.target.value })}
+                  >
+                    <option value="llama3">llama3 (Model Rekomendasi)</option>
+                    <option value="llama3.2">llama3.2 (Fast / 3B parameters)</option>
+                    <option value="mistral">mistral (Cinematic prompt expert)</option>
+                    <option value="gemma2">gemma2 (Google Lightweight Local)</option>
+                    <option value="phi3">phi3 (Microsoft Local)</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Sound overlay settings */}
         <div className="bg-[#121214] border border-[#232329] rounded-xl p-4 space-y-4">
           <div className="flex items-center gap-2 border-b border-[#232329] pb-2">
             <Volume2 className="h-4 w-4 text-[#ff5a1f]" />

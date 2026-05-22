@@ -56,6 +56,9 @@ export interface Project {
   musicVolume: number;
   thumbnail?: ThumbnailConfig;
   videoUrl?: string; // final compiled video URL
+  llmProvider?: "gemini" | "ollama";
+  ollamaUrl?: string;
+  ollamaModel?: string;
   createdAt: string;
 }
 
