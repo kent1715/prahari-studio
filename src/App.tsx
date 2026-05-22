@@ -32,6 +32,7 @@ const INITIAL_PROJECTS: Project[] = [
         cameraAngle: "Low Angle Wide Shot",
         transition: "Fade In",
         duration: 5,
+        emotion: "Misterius",
         videoStatus: "ready",
         videoProgress: 100,
         videoUrl: "https://www.w3schools.com/html/mov_bbb.mp4"
@@ -45,6 +46,7 @@ const INITIAL_PROJECTS: Project[] = [
         cameraAngle: "Macro Extreme Close-Up",
         transition: "Dissolve",
         duration: 5,
+        emotion: "Tajam",
         videoStatus: "ready",
         videoProgress: 100,
         videoUrl: "https://www.w3schools.com/html/mov_bbb.mp4"
