@@ -203,19 +203,38 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
                   />
                 </div>
 
-                <div className="space-y-1">
+                <div className="space-y-1.5 font-mono text-xs">
                   <label className="block text-[10px] font-mono text-neutral-400 uppercase">Model Identifier</label>
-                  <select
-                    className="w-full bg-[#101014] border border-[#2d2d37] rounded px-3 py-1.5 text-white font-mono text-sm focus:outline-none focus:border-[#ff5a1f]"
-                    value={project.ollamaModel || "llama3"}
-                    onChange={(e) => onUpdateProject({ ...project, ollamaModel: e.target.value })}
-                  >
-                    <option value="llama3">llama3 (Model Rekomendasi)</option>
-                    <option value="llama3.2">llama3.2 (Fast / 3B parameters)</option>
-                    <option value="mistral">mistral (Cinematic prompt expert)</option>
-                    <option value="gemma2">gemma2 (Google Lightweight Local)</option>
-                    <option value="phi3">phi3 (Microsoft Local)</option>
-                  </select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      className="bg-[#101014] border border-[#2d2d37] rounded px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-[#ff5a1f]"
+                      value={["llama3", "llama3.2", "mistral", "gemma2", "phi3"].includes(project.ollamaModel || "llama3") ? (project.ollamaModel || "llama3") : "custom"}
+                      onChange={(e) => {
+                        if (e.target.value !== "custom") {
+                          onUpdateProject({ ...project, ollamaModel: e.target.value });
+                        }
+                      }}
+                    >
+                      <option value="llama3">llama3</option>
+                      <option value="llama3.2">llama3.2</option>
+                      <option value="mistral">mistral</option>
+                      <option value="gemma2">gemma2</option>
+                      <option value="phi3">phi3</option>
+                      <option value="custom">Kustom / Input Manual...</option>
+                    </select>
+                    
+                    <input
+                      type="text"
+                      className="bg-[#101014] border border-[#2d2d37] rounded px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-[#ff5a1f]"
+                      value={project.ollamaModel || "llama3"}
+                      onChange={(e) => onUpdateProject({ ...project, ollamaModel: e.target.value })}
+                      placeholder="Identitas model..."
+                      title="Ketikkan nama model Ollama Anda secara manual jika berbeda"
+                    />
+                  </div>
+                  <span className="text-[10px] text-neutral-500 font-mono block">
+                    Model aktif: <strong className="text-neutral-300">{project.ollamaModel || "llama3"}</strong>. Anda bisa mengetik manual seperti <code className="text-amber-500 font-bold">llama3.1</code> atau <code className="text-amber-500 font-bold">llama3.1:latest</code>.
+                  </span>
                 </div>
 
                 {/* Connection Status Checker */}
@@ -255,23 +274,27 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
                       <p className="text-[10px] font-mono leading-tight">{status.message}</p>
                       
                       {status.active && status.models.length > 0 && (
-                        <div className="pt-1.5 border-t border-emerald-900/20 space-y-1">
-                          <span className="text-[9px] font-mono uppercase text-emerald-400 block font-bold">Model Lokal Terinstal:</span>
+                        <div className="pt-2 border-t border-emerald-900/20 space-y-1.5">
+                          <span className="text-[9px] font-mono uppercase text-emerald-400 block font-bold">Model Lokal Terinstal (Klik untuk memilih):</span>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {status.models.map((mod, mIdx) => {
-                              const isSelectedModelStyle = mod.toLowerCase().includes((project.ollamaModel || "llama3").toLowerCase());
+                              const isSelectedModelStyle = mod.toLowerCase() === (project.ollamaModel || "llama3").toLowerCase() || 
+                                                           mod.toLowerCase().includes((project.ollamaModel || "llama3").toLowerCase()) ||
+                                                           (project.ollamaModel || "llama3").toLowerCase().includes(mod.toLowerCase());
                               return (
-                                <span 
+                                <button 
+                                  type="button"
                                   key={mIdx} 
-                                  className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                  onClick={() => onUpdateProject({ ...project, ollamaModel: mod })}
+                                  className={`text-[9px] font-mono px-2 py-0.5 rounded text-left transition-all duration-150 cursor-pointer ${
                                     isSelectedModelStyle 
-                                      ? "bg-emerald-800 text-white font-bold border border-emerald-500" 
-                                      : "bg-emerald-900/40 text-emerald-400"
+                                      ? "bg-emerald-600 text-white font-bold border border-emerald-400 shadow-sm scale-105" 
+                                      : "bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/50 hover:text-emerald-100 border border-emerald-900/40"
                                   }`}
-                                  title={isSelectedModelStyle ? "Model sedang terpilih di KentStudio" : "Model terinstal di PC Anda"}
+                                  title={`Klik untuk menggunakan model ${mod}`}
                                 >
                                   {mod} {isSelectedModelStyle && "✓"}
-                                </span>
+                                </button>
                               );
                             })}
                           </div>
