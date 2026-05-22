@@ -59,6 +59,7 @@ export interface Project {
   llmProvider?: "gemini" | "ollama";
   ollamaUrl?: string;
   ollamaModel?: string;
+  wanUrl?: string;
   createdAt: string;
 }
 

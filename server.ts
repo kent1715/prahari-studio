@@ -110,6 +110,37 @@ app.post("/api/check-ollama-status", async (req, res) => {
   }
 });
 
+// 0.5. API: Check WAN 2.2 Desktop connection status
+app.post("/api/check-wan-status", async (req, res) => {
+  const { wanUrl } = req.body;
+  const targetUrl = wanUrl || "http://127.0.0.1:7860";
+  
+  try {
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), 2000);
+    
+    const testRes = await fetch(targetUrl, {
+      method: "GET",
+      signal: controller.signal
+    });
+    
+    clearTimeout(abortTimeout);
+    
+    return res.json({
+      success: true,
+      active: true,
+      statusCode: testRes.status,
+      message: `Berhasil terhubung! Mesin Desktop WAN 2.2 responsif di ${targetUrl} (Status: ${testRes.status})`
+    });
+  } catch (err: any) {
+    return res.json({
+      success: false,
+      active: false,
+      message: `Gagal terhubung ke host WAN 2.2 Desktop via Server (${err.message}). Pastikan software generator (seperti ComfyUI/Gradio WebUI) sedang berjalan dan listening di alamat tersebut.`
+    });
+  }
+});
+
 // 1. API: Live hardware & system metrics (simulated real RTX A2000 stats)
 app.get("/api/metrics", (req, res) => {
   const time = Date.now();

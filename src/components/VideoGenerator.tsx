@@ -1,13 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Sparkles, FileText, Compass, ListRestart, Sliders, RefreshCw, AlertCircle, Play, CheckCircle, HelpCircle, Film, Edit3, Volume2 } from "lucide-react";
 import type { Project, StoryboardScene, VideoStyle } from "../types";
 
 const SAMPLE_VIDEOS = [
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+  "https://assets.mixkit.co/videos/preview/mixkit-stars-in-space-background-1611-large.mp4",
+  "https://assets.mixkit.co/videos/preview/mixkit-abstract-laser-lights-background-glow-31745-large.mp4",
+  "https://assets.mixkit.co/videos/preview/mixkit-wind-blowing-in-the-forest-41135-large.mp4",
+  "https://assets.mixkit.co/videos/preview/mixkit-animation-of-futuristic-hud-interface-31913-large.mp4"
+];
+
+const SAMPLE_POSTERS = [
+  "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=600&auto=format&fit=crop", // Space/Sci-fi
+  "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=600&auto=format&fit=crop", // Ocean/Nature
+  "https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=600&auto=format&fit=crop", // Cyberpunk/Tech
+  "https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=600&auto=format&fit=crop"  // Mystical fog/mountain
 ];
 
 interface VideoGeneratorProps {
@@ -44,6 +50,19 @@ export default function VideoGenerator({
 
   const [enhancingSceneId, setEnhancingSceneId] = useState<string | null>(null);
   const [renderingSceneId, setRenderingSceneId] = useState<string | null>(null);
+
+  // Synchronize local state when active project changes
+  useEffect(() => {
+    setTopicPrompt(project.niche || "");
+    setIdeas(project.ideas || []);
+    setScriptText({
+      hook: project.script?.hook || "",
+      intro: project.script?.intro || "",
+      mainStory: project.script?.mainStory || "",
+      cta: project.script?.cta || "",
+    });
+    setStoryboardScenes(project.storyboard || []);
+  }, [project.id]);
 
   // 1. Generate Business Ideas from Topic Niche
   const handleGenerateIdeas = async () => {
@@ -658,6 +677,7 @@ export default function VideoGenerator({
                             <div className={`w-full relative group flex items-center justify-center ${aspectRatio === "9:16" ? "max-h-[160px]" : "w-full"}`}>
                               <video
                                 src={scene.videoUrl}
+                                poster={SAMPLE_POSTERS[(scene.sceneNumber - 1) % SAMPLE_POSTERS.length]}
                                 controls
                                 playsInline
                                 loop

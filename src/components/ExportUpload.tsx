@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Play, Sparkles, Youtube, CheckCircle, RefreshCw, Radio, HardDrive, Share2, Info } from "lucide-react";
 import type { Project } from "../types";
 
@@ -18,6 +18,13 @@ export default function ExportUpload({ project, onUpdateProject, onAddQueue }: E
 
   const [uploading, setUploading] = useState(false);
   const [uploadDone, setUploadDone] = useState(false);
+
+  useEffect(() => {
+    setUploadDone(project.status === "completed");
+    setCompiling(false);
+    setCompileProgress(0);
+    setUploading(false);
+  }, [project.id, project.status]);
 
   // Trigger compiler to glue scenes, narration, BGM, sfx and subtitles together
   const handleCompile = () => {

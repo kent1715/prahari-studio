@@ -74,6 +74,45 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
     }
   };
 
+  const [checkingWan, setCheckingWan] = useState(false);
+  const [wanStatus, setWanStatus] = useState<{
+    active: boolean;
+    message: string;
+    statusCode?: number;
+  } | null>(null);
+
+  const checkWanStatus = async () => {
+    setCheckingWan(true);
+    setWanStatus(null);
+    const wanUrl = project.wanUrl || "http://127.0.0.1:7860";
+    
+    try {
+      const res = await fetch("/api/check-wan-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wanUrl })
+      });
+      const data = await res.json();
+      
+      if (data.active) {
+        setWanStatus({
+          active: true,
+          statusCode: data.statusCode,
+          message: data.message
+        });
+      } else {
+        throw new Error(data.message || "Timeout");
+      }
+    } catch (err: any) {
+      setWanStatus({
+        active: false,
+        message: err.message || `Gagal terhubung ke host WAN 2.2. Pastikan webui/api server eksternal Anda menyala.`
+      });
+    } finally {
+      setCheckingWan(false);
+    }
+  };
+
   const fileStructures = [
     { name: "/generated_video", desc: "Tempat penyimpanan footage rendering WAN 2.2" },
     { name: "/generated_audio", desc: "Narasi bervolume & pitch yang diproduksi otomatis" },
@@ -221,6 +260,64 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* WAN 2.2 Desktop Controller Block */}
+        <div className="bg-[#121214] border border-[#232329] rounded-xl p-4 space-y-4">
+          <div className="flex items-center gap-2 border-b border-[#232329] pb-2">
+            <Radio className="h-4 w-4 text-[#ff5a1f]" />
+            <h3 className="font-sans font-medium text-white text-xs uppercase tracking-wider">Koneksi Mesin Video WAN 2.2</h3>
+          </div>
+
+          <div className="space-y-4 text-xs">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-mono text-neutral-400 uppercase">Endpoint URI WAN 2.2 Host</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="flex-1 bg-[#101014] border border-[#2d2d37] rounded px-3 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-[#ff5a1f]"
+                  value={project.wanUrl || "http://127.0.0.1:7860"}
+                  onChange={(e) => onUpdateProject({ ...project, wanUrl: e.target.value })}
+                  placeholder="e.g. http://127.0.0.1:7860"
+                />
+                <button
+                  type="button"
+                  onClick={checkWanStatus}
+                  disabled={checkingWan}
+                  className="px-3 py-1.5 bg-[#1c1c23] hover:bg-[#ff5a1f] hover:text-white text-neutral-300 rounded font-mono text-[10px] flex items-center gap-1 cursor-pointer disabled:opacity-50 transition-all active:scale-95 duration-100"
+                >
+                  {checkingWan ? <RefreshCw className="h-3 w-3 animate-spin text-[#ff5a1f]" /> : <Activity className="h-3 w-3 text-[#ff5a1f]" />}
+                  <span>{checkingWan ? "Ping..." : "Test Link"}</span>
+                </button>
+              </div>
+              <p className="text-[9px] text-neutral-500 font-mono mt-1">
+                Port default Gradio/WebUI: <span className="text-neutral-400">7860</span> • ComfyUI: <span className="text-neutral-400">8188</span> • Custom API: <span className="text-neutral-400">8000</span>
+              </p>
+            </div>
+
+            {wanStatus && (
+              <div className={`p-2.5 rounded text-xs leading-relaxed space-y-1.5 border transition-all ${
+                wanStatus.active 
+                  ? "bg-emerald-950/20 border-emerald-900/35 text-emerald-300" 
+                  : "bg-rose-950/20 border-rose-900/35 text-rose-300"
+              }`}>
+                <div className="flex items-center gap-1.5 font-bold text-[10px] uppercase font-sans">
+                  {wanStatus.active ? (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                      <span>WAN 2.2 DESKTOP ACTIVE</span>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="h-3.5 w-3.5 text-rose-400" />
+                      <span>Sinyal WAN OFFLINE</span>
+                    </>
+                  )}
+                </div>
+                <p className="text-[10px] font-mono leading-tight">{wanStatus.message}</p>
               </div>
             )}
           </div>
