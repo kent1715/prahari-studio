@@ -1,5 +1,5 @@
-import React from "react";
-import { Volume2, Music, Type, AlertCircle, ShieldAlert, Zap, Radio, Sliders } from "lucide-react";
+import React, { useState } from "react";
+import { Volume2, Music, Type, AlertCircle, ShieldAlert, Zap, Radio, Sliders, RefreshCw, CheckCircle2, XCircle, Activity } from "lucide-react";
 import type { Project } from "../types";
 
 interface SettingsPanelProps {
@@ -8,6 +8,72 @@ interface SettingsPanelProps {
 }
 
 export default function SettingsPanel({ project, onUpdateProject }: SettingsPanelProps) {
+  const [checking, setChecking] = useState(false);
+  const [status, setStatus] = useState<{
+    active: boolean;
+    models: string[];
+    message: string;
+    source?: "server" | "client";
+  } | null>(null);
+
+  const checkOllamaStatus = async () => {
+    setChecking(true);
+    setStatus(null);
+    const ollamaUrl = project.ollamaUrl || "http://127.0.0.1:11434";
+    
+    try {
+      // 1. Try server-side query first
+      const srvRes = await fetch("/api/check-ollama-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ollamaUrl }),
+      });
+      const srvData = await srvRes.json();
+      
+      if (srvData.active) {
+        setStatus({
+          active: true,
+          models: (srvData.models || []).map((m: any) => m.name || m),
+          source: "server",
+          message: srvData.message,
+        });
+        setChecking(false);
+        return;
+      }
+      
+      // 2. Fallback to client-side direct request (browser is local to Ollama host)
+      const controller = new AbortController();
+      const abortId = setTimeout(() => controller.abort(), 1500);
+      
+      const clientRes = await fetch(`${ollamaUrl}/api/tags`, {
+        method: "GET",
+        signal: controller.signal
+      });
+      clearTimeout(abortId);
+      
+      if (clientRes.ok) {
+        const clientData = await clientRes.json();
+        const detectedModels = (clientData.models || []).map((m: any) => m.name || m);
+        setStatus({
+          active: true,
+          models: detectedModels,
+          source: "client",
+          message: "Koneksi Langsung Browser Sukses! Ollama aktif di komputer local Anda."
+        });
+      } else {
+        throw new Error("CORS or network error");
+      }
+    } catch (err: any) {
+      setStatus({
+        active: false,
+        models: [],
+        message: `Gagal terhubung ke Ollama (${err.message === "CORS or network error" ? "Akses diblokir CORS / Proteksi Browser" : "Service Offline"}). Pastikan Anda menyalakan aplikasi Ollama dan setel environment OLLAMA_ORIGINS=* jika perlu.`
+      });
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const fileStructures = [
     { name: "/generated_video", desc: "Tempat penyimpanan footage rendering WAN 2.2" },
     { name: "/generated_audio", desc: "Narasi bervolume & pitch yang diproduksi otomatis" },
@@ -91,6 +157,69 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
                     <option value="gemma2">gemma2 (Google Lightweight Local)</option>
                     <option value="phi3">phi3 (Microsoft Local)</option>
                   </select>
+                </div>
+
+                {/* Connection Status Checker */}
+                <div className="border-t border-[#2a2a35] pt-3 mt-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-neutral-400 uppercase">Cek Koneksi Ollama</span>
+                    <button
+                      type="button"
+                      onClick={checkOllamaStatus}
+                      disabled={checking}
+                      className="px-2.5 py-1 bg-[#1c1c23] hover:bg-[#ff5a1f] hover:text-white text-neutral-300 rounded font-mono text-[10px] flex items-center gap-1 cursor-pointer disabled:opacity-50 transition-all active:scale-95 duration-100"
+                    >
+                      {checking ? <RefreshCw className="h-3 w-3 animate-spin text-[#ff5a1f]" /> : <Activity className="h-3 w-3 text-[#ff5a1f]" />}
+                      <span>{checking ? "Mengecek..." : "Cek Status"}</span>
+                    </button>
+                  </div>
+
+                  {status && (
+                    <div className={`p-2.5 rounded text-xs leading-relaxed space-y-1.5 border transition-all ${
+                      status.active 
+                        ? "bg-emerald-950/20 border-emerald-900/35 text-emerald-300" 
+                        : "bg-rose-950/20 border-rose-900/35 text-rose-300"
+                    }`}>
+                      <div className="flex items-center gap-1.5 font-bold text-[10px] uppercase">
+                        {status.active ? (
+                          <>
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                            <span>OLLAMA AKTIF ({status.source === "server" ? "CONNECTED VIA SERVER" : "CONNECTED VIA BROWSER"})</span>
+                          </>
+                        ) : (
+                          <>
+                            <XCircle className="h-3.5 w-3.5 text-rose-400" />
+                            <span>OLLAMA TIDAK DETEKSI</span>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-[10px] font-mono leading-tight">{status.message}</p>
+                      
+                      {status.active && status.models.length > 0 && (
+                        <div className="pt-1.5 border-t border-emerald-900/20 space-y-1">
+                          <span className="text-[9px] font-mono uppercase text-emerald-400 block font-bold">Model Lokal Terinstal:</span>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {status.models.map((mod, mIdx) => {
+                              const isSelectedModelStyle = mod.toLowerCase().includes((project.ollamaModel || "llama3").toLowerCase());
+                              return (
+                                <span 
+                                  key={mIdx} 
+                                  className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                                    isSelectedModelStyle 
+                                      ? "bg-emerald-800 text-white font-bold border border-emerald-500" 
+                                      : "bg-emerald-900/40 text-emerald-400"
+                                  }`}
+                                  title={isSelectedModelStyle ? "Model sedang terpilih di KentStudio" : "Model terinstal di PC Anda"}
+                                >
+                                  {mod} {isSelectedModelStyle && "✓"}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

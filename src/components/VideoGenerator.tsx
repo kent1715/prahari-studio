@@ -2,6 +2,14 @@ import React, { useState } from "react";
 import { Sparkles, FileText, Compass, ListRestart, Sliders, RefreshCw, AlertCircle, Play, CheckCircle, HelpCircle, Film, Edit3, Volume2 } from "lucide-react";
 import type { Project, StoryboardScene, VideoStyle } from "../types";
 
+const SAMPLE_VIDEOS = [
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4",
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+];
+
 interface VideoGeneratorProps {
   project: Project;
   onUpdateProject: (p: Project) => void;
@@ -253,10 +261,14 @@ export default function VideoGenerator({
       progress += 10;
       const updated = storyboardScenes.map((sz) => {
         if (sz.id === sceneId) {
+          const isReady = progress >= 100;
           return {
             ...sz,
-            videoStatus: progress >= 100 ? "ready" : "generating",
-            videoProgress: Math.min(100, progress)
+            videoStatus: isReady ? "ready" : "generating",
+            videoProgress: Math.min(100, progress),
+            videoUrl: isReady
+              ? SAMPLE_VIDEOS[(sz.sceneNumber - 1) % SAMPLE_VIDEOS.length]
+              : sz.videoUrl
           };
         }
         return sz;
@@ -565,94 +577,147 @@ export default function VideoGenerator({
                   </div>
                 ) : (
                   storyboardScenes.map((scene, sIdx) => (
-                    <div key={scene.id} className="bg-[#17171d] border border-[#23232a] rounded-lg p-3 space-y-3">
-                      {/* Header Scene Info */}
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-mono font-bold text-white">SCENE #{scene.sceneNumber}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-neutral-400 bg-neutral-800 px-2 py-0.5 rounded">
-                            {scene.cameraAngle}
-                          </span>
-                          <span className="text-[10px] font-mono text-neutral-400 bg-neutral-800 px-2 py-0.5 rounded">
-                            {scene.duration}s
-                          </span>
+                    <div key={scene.id} className="bg-[#17171d] border border-[#23232a] rounded-lg p-3.5 space-y-4 lg:grid lg:grid-cols-12 lg:gap-4 lg:space-y-0">
+                      {/* Left Side: Script and Prompts Configuration */}
+                      <div className="lg:col-span-7 flex flex-col justify-between space-y-3">
+                        <div>
+                          {/* Header Scene Info */}
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-mono font-bold text-white">SCENE #{scene.sceneNumber}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono text-neutral-400 bg-neutral-800 px-2 py-0.5 rounded">
+                                {scene.cameraAngle}
+                              </span>
+                              <span className="text-[10px] font-mono text-neutral-400 bg-neutral-800 px-2 py-0.5 rounded">
+                                {scene.duration}s
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Narration Textarea */}
+                          <div className="space-y-1 mb-3">
+                            <span className="text-[9px] font-mono text-neutral-400 uppercase tracking-widest block">Naskah Narasi Penuturan</span>
+                            <div className="flex items-start gap-2">
+                              <textarea
+                                rows={2}
+                                className="flex-1 bg-[#121215] border border-[#282831] text-xs text-neutral-300 p-1.5 rounded focus:outline-none focus:border-[#ff5a1f]"
+                                value={scene.narration}
+                                onChange={(e) => handleEditScene(scene.id, { narration: e.target.value })}
+                              />
+                              <button
+                                onClick={() => handleTTSPreview(scene.narration)}
+                                className="p-2 bg-neutral-800 text-neutral-400 hover:text-white rounded flex items-center justify-center cursor-pointer transition-colors"
+                                title="Preview Suara (TTS)"
+                              >
+                                <Volume2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Prompt WAN 2.2 */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between items-center text-[9px] font-mono text-neutral-400 uppercase tracking-widest">
+                              <span>WAN 2.2 RAW PROMPT</span>
+                              <button
+                                onClick={() => handleEnhancePrompt(scene.id, scene.prompt)}
+                                disabled={enhancingSceneId === scene.id}
+                                className="text-cyan-400 hover:text-cyan-300 font-mono flex items-center gap-1 cursor-pointer"
+                              >
+                                {enhancingSceneId === scene.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                                <span>Cinematic Enhance AI</span>
+                              </button>
+                            </div>
+                            <textarea
+                              rows={2}
+                              className="w-full bg-[#121215] border border-[#282831] text-xs text-neutral-300 p-1.5 rounded focus:outline-none focus:border-[#ff5a1f]"
+                              value={scene.prompt}
+                              onChange={(e) => handleEditScene(scene.id, { prompt: e.target.value })}
+                            />
+                          </div>
                         </div>
+
+                        {/* Enhanced display box */}
+                        {scene.enhancedPrompt && (
+                          <div className="bg-cyan-950/20 border border-cyan-900/35 p-2 rounded text-[11px] text-[#ff5a1f] font-mono leading-relaxed mt-2">
+                            <span className="font-bold text-[9px] uppercase tracking-wider text-cyan-400 block mb-0.5">Enhanced WAN 2.2 Prompt:</span>
+                            {scene.enhancedPrompt}
+                          </div>
+                        )}
                       </div>
 
-                      {/* Narration Textarea */}
-                      <div className="space-y-1">
-                        <span className="text-[9px] font-mono text-neutral-400 uppercase tracking-widest block">Naskah Narasi Penuturan</span>
-                        <div className="flex items-start gap-2">
-                          <textarea
-                            rows={2}
-                            className="flex-1 bg-[#121215] border border-[#282831] text-xs text-neutral-300 p-1.5 rounded focus:outline-none"
-                            value={scene.narration}
-                            onChange={(e) => handleEditScene(scene.id, { narration: e.target.value })}
-                          />
-                          <button
-                            onClick={() => handleTTSPreview(scene.narration)}
-                            className="p-2 bg-neutral-800 text-neutral-400 hover:text-white rounded flex items-center justify-center cursor-pointer"
-                            title="Preview Suara (TTS)"
-                          >
-                            <Volume2 className="h-4 w-4" />
-                          </button>
+                      {/* Right Side: Interactive Visual Player Workspace */}
+                      <div className="lg:col-span-5 bg-[#0e0e12] border border-[#1e1e24] p-3 rounded-lg flex flex-col justify-between space-y-3">
+                        <div className="text-[10px] font-mono text-neutral-400 flex items-center justify-between border-b border-[#1c1c21] pb-1.5">
+                          <span className="text-[#ff5a1f] font-bold">WAN 2.2 PREVIEW</span>
+                          <span>Format {aspectRatio}</span>
                         </div>
-                      </div>
 
-                      {/* Prompt WAN 2.2 */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between items-center text-[9px] font-mono text-neutral-400 uppercase tracking-widest">
-                          <span>WAN 2.2 RAW PROMPT</span>
-                          <button
-                            onClick={() => handleEnhancePrompt(scene.id, scene.prompt)}
-                            disabled={enhancingSceneId === scene.id}
-                            className="text-cyan-400 hover:text-cyan-300 font-mono flex items-center gap-1"
-                          >
-                            {enhancingSceneId === scene.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-                            <span>Cinematic Enhance AI</span>
-                          </button>
-                        </div>
-                        <textarea
-                          rows={2}
-                          className="w-full bg-[#121215] border border-[#282831] text-xs text-neutral-300 p-1.5 rounded focus:outline-none focus:border-[#ff5a1f]"
-                          value={scene.prompt}
-                          onChange={(e) => handleEditScene(scene.id, { prompt: e.target.value })}
-                        />
-                      </div>
-
-                      {/* Enhanced display box */}
-                      {scene.enhancedPrompt && (
-                        <div className="bg-cyan-950/20 border border-cyan-900/35 p-2 rounded text-[11px] text-cyan-300 font-mono">
-                          <span className="font-bold text-[9px] uppercase tracking-wider text-cyan-400 block mb-0.5">Enhanced Screenplay Prompt:</span>
-                          {scene.enhancedPrompt}
-                        </div>
-                      )}
-
-                      {/* Scene Clip status and rendering triggering */}
-                      <div className="flex justify-between items-center pt-2 border-t border-[#232328]/50">
-                        <div className="flex items-center gap-1.5 text-xs text-neutral-400">
-                          {scene.videoStatus === "ready" ? (
-                            <span className="text-emerald-400 font-medium flex items-center gap-1">
-                              <CheckCircle className="h-3.5 w-3.5 fill-current text-emerald-500 text-white" />
-                              <span> Footage Siap ({scene.duration}s)</span>
-                            </span>
+                        {/* Visual Player Box */}
+                        <div className="relative flex-1 flex items-center justify-center bg-black rounded overflow-hidden min-h-[140px] border border-neutral-900 shadow-inner">
+                          {scene.videoStatus === "ready" && scene.videoUrl ? (
+                            <div className={`w-full relative group flex items-center justify-center ${aspectRatio === "9:16" ? "max-h-[160px]" : "w-full"}`}>
+                              <video
+                                src={scene.videoUrl}
+                                controls
+                                playsInline
+                                loop
+                                preload="metadata"
+                                className="w-full rounded h-full object-cover max-h-[160px] shadow-lg focus:outline-none"
+                              />
+                            </div>
                           ) : scene.videoStatus === "generating" ? (
-                            <span className="text-amber-400 flex items-center gap-1 animate-pulse font-mono">
-                              <RefreshCw className="h-3.5 w-3.5 animate-spin text-amber-500" />
-                              <span>Rendering {scene.videoProgress}%</span>
-                            </span>
+                            <div className="w-full px-3 text-center space-y-2">
+                              {/* Loading spinner */}
+                              <div className="flex flex-col items-center justify-center">
+                                <RefreshCw className="h-6 w-6 text-amber-500 animate-spin mb-1" />
+                                <div className="text-[10px] font-mono text-amber-500 uppercase tracking-wider font-bold">Rendering Scene...</div>
+                              </div>
+                              {/* Synthetic CLI output */}
+                              <div className="text-[8px] font-mono text-neutral-400 h-9 overflow-hidden leading-tight bg-[#07070a] p-1.5 rounded text-left border border-neutral-900">
+                                {scene.videoProgress < 30 && <span className="text-cyan-400 font-bold">[VRAM: 12.8GB] Allocating resources...</span>}
+                                {scene.videoProgress >= 30 && scene.videoProgress < 60 && <span className="text-yellow-400 font-bold">[WAN 2.2] Sampling step {Math.floor(scene.videoProgress / 2)}/50...</span>}
+                                {scene.videoProgress >= 60 && scene.videoProgress < 90 && <span className="text-purple-400 font-bold">[WAN 2.2] Denoising latent space... cfgs=6.0</span>}
+                                {scene.videoProgress >= 90 && <span className="text-emerald-400 font-bold">[POST] Decoding frames with VAE... done</span>}
+                              </div>
+                              {/* Progress loading percentage bar */}
+                              <div className="w-full bg-[#161620] h-1 rounded-full overflow-hidden">
+                                <div
+                                  className="bg-amber-500 h-full transition-all duration-300 rounded-full"
+                                  style={{ width: `${scene.videoProgress}%` }}
+                                />
+                              </div>
+                              <div className="text-[9px] font-mono text-neutral-500">{scene.videoProgress}% Complete</div>
+                            </div>
                           ) : (
-                            <span className="text-neutral-500 font-mono">Footage pending</span>
+                            <div className="text-center p-3 text-neutral-600 space-y-1">
+                              <Film className="h-6 w-6 text-neutral-700 mx-auto" />
+                              <div className="text-[10px] font-mono uppercase tracking-wider">Footage Pending</div>
+                              <div className="text-[9px] text-neutral-500 font-mono">1920x1080 • WAN 2.2</div>
+                            </div>
                           )}
                         </div>
 
-                        <button
-                          onClick={() => handleRenderScene(scene.id)}
-                          disabled={renderingSceneId !== null}
-                          className="px-3 py-1.5 bg-[#1e1e24] text-neutral-300 hover:bg-[#ff5a1f] hover:text-white rounded text-xs font-mono font-medium transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          {scene.videoStatus === "ready" ? "Re-Generate Clip" : "Generate Clip"}
-                        </button>
+                        {/* Render Buttons and Status */}
+                        <div className="flex items-center justify-between pt-1">
+                          <div className="text-xs">
+                            {scene.videoStatus === "ready" ? (
+                              <span className="text-emerald-400 font-mono text-[10px] font-medium flex items-center gap-1">
+                                <CheckCircle className="h-3 w-3 fill-current text-[#17171d] text-emerald-500" />
+                                <span>SIAP DIPLAY</span>
+                              </span>
+                            ) : (
+                              <span className="text-neutral-500 font-mono text-[9px] uppercase">No-Render</span>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={() => handleRenderScene(scene.id)}
+                            disabled={renderingSceneId !== null}
+                            className="px-2.5 py-1 bg-[#1e1e24] text-neutral-300 hover:bg-[#ff5a1f] hover:text-white rounded text-[10px] font-mono font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {scene.videoStatus === "ready" ? "Re-Render" : "Render Video"}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))

@@ -69,6 +69,47 @@ async function queryOllama(ollamaUrl: string, model: string, systemInstruction: 
   return data.message?.content || "";
 }
 
+// 0. API: Check Ollama connection status and installed models
+app.post("/api/check-ollama-status", async (req, res) => {
+  const { ollamaUrl } = req.body;
+  const targetUrl = ollamaUrl || "http://127.0.0.1:11434";
+  
+  try {
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), 2000);
+    
+    const tagsRes = await fetch(`${targetUrl}/api/tags`, {
+      method: "GET",
+      signal: controller.signal
+    });
+    
+    clearTimeout(abortTimeout);
+    
+    if (tagsRes.ok) {
+      const data: any = await tagsRes.json();
+      return res.json({
+        success: true,
+        active: true,
+        models: data.models || [],
+        message: "Ollama aktif dan terhubung via Server!"
+      });
+    } else {
+      return res.json({
+        success: true,
+        active: true,
+        models: [],
+        message: `Ollama aktif tetapi merespon dengan status ${tagsRes.status}`
+      });
+    }
+  } catch (err: any) {
+    return res.json({
+      success: false,
+      active: false,
+      message: `Gagal terhubung ke Ollama via Server (${err.message}).`
+    });
+  }
+});
+
 // 1. API: Live hardware & system metrics (simulated real RTX A2000 stats)
 app.get("/api/metrics", (req, res) => {
   const time = Date.now();

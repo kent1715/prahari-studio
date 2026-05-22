@@ -265,7 +265,7 @@ export default function App() {
             }`}
           >
             <Settings className="h-3.5 w-3.5" />
-            <span>Setelan Audio & Subtitle</span>
+            <span>Setelan Aplikasi & LLM</span>
           </button>
 
           <button
