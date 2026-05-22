@@ -97,7 +97,16 @@ export default function VideoGenerator({
         throw new Error(data.message || `HTTP error! Status: ${res.status}`);
       }
 
-      const generatedIdeas = Array.isArray(data.ideas) ? data.ideas : [];
+      const rawIdeas = Array.isArray(data.ideas) ? data.ideas : [];
+      const generatedIdeas = rawIdeas
+        .map((item: any) => {
+          if (!item) return "";
+          if (typeof item === "object") {
+            return item.title || item.idea || item.text || JSON.stringify(item);
+          }
+          return String(item);
+        })
+        .filter(Boolean);
       setIdeas(generatedIdeas);
 
       if (data.message) {

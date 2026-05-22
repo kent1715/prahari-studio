@@ -72,6 +72,119 @@ async function queryOllama(ollamaUrl: string, model: string, systemInstruction: 
   return data.message?.content || "";
 }
 
+// Robust helper to parse JSON even if surrounded by markdown code blocks or chatter
+function parseRobustJson(text: string, defaultValue: any = {}): any {
+  if (!text) return defaultValue;
+  let trimmed = text.trim();
+  
+  // Try direct parse first
+  try {
+    return JSON.parse(trimmed);
+  } catch (e) {
+    // Continue below
+  }
+
+  // Attempt to extract JSON block using regex (like ```json ... ``` or ``` ...)
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
+  const match = trimmed.match(codeBlockRegex);
+  if (match) {
+    const codeContent = match[1].trim();
+    try {
+      return JSON.parse(codeContent);
+    } catch (e) {
+      trimmed = codeContent; // Fallback to parsing the matched content directly below
+    }
+  }
+
+  // Find first '{' or '[' and last matching '}' or ']'
+  const firstCurly = trimmed.indexOf('{');
+  const firstSquare = trimmed.indexOf('[');
+  
+  if (firstCurly !== -1 || firstSquare !== -1) {
+    let startIndex = -1;
+    let endIndex = -1;
+    
+    if (firstCurly !== -1 && (firstSquare === -1 || firstCurly < firstSquare)) {
+      startIndex = firstCurly;
+      endIndex = trimmed.lastIndexOf('}');
+    } else {
+      startIndex = firstSquare;
+      endIndex = trimmed.lastIndexOf(']');
+    }
+
+    if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
+      const candidateString = trimmed.substring(startIndex, endIndex + 1);
+      try {
+        return JSON.parse(candidateString);
+      } catch (e) {
+         // Repair trailing commas in arrays/objects
+         const repaired = candidateString
+           .replace(/,(\s*[\]}])/g, '$1')
+           .trim();
+         try {
+           return JSON.parse(repaired);
+         } catch (e2) {
+           // fall through
+         }
+      }
+    }
+  }
+
+  return defaultValue;
+}
+
+// Robust helper to recursively flatten any JSON LLM response structure into a clean array of string ideas (no objects)
+function normalizeStringArray(input: any): string[] {
+  if (!input) return [];
+  if (Array.isArray(input)) {
+    const list: string[] = [];
+    for (const item of input) {
+      if (!item) continue;
+      if (typeof item === "object") {
+        const val = item.title || item.idea || item.text || item.heading || Object.values(item)[0];
+        if (val) list.push(String(val));
+      } else {
+        list.push(String(item));
+      }
+    }
+    return list.filter(Boolean);
+  }
+  if (typeof input === "object") {
+    // If it is an object, see if there is an array property inside like "ideas", "titles", "data", "list", etc.
+    for (const key of Object.keys(input)) {
+      if (Array.isArray(input[key])) {
+        const subResult = normalizeStringArray(input[key]);
+        if (subResult.length > 0) return subResult;
+      }
+    }
+    // Check common key fields directly
+    const val = input.ideas || input.titles || input.title || input.idea || input.text;
+    if (val) {
+      return normalizeStringArray(val);
+    }
+    // Fallback to values
+    const vals = Object.values(input).filter(v => typeof v === "string" || Array.isArray(v));
+    if (vals.length > 0) {
+      return normalizeStringArray(vals[0]);
+    }
+  }
+  if (typeof input === "string") {
+    // Attempt robust parse first
+    const cleanParsed = parseRobustJson(input, null);
+    if (cleanParsed !== null) {
+      return normalizeStringArray(cleanParsed);
+    }
+
+    const trimmed = input.trim();
+    // Plain text: split by lines or numbering
+    return trimmed
+      .split(/\n+/)
+      .map(line => line.replace(/^\d+[\.\-\s]+/, "").trim()) // clean list numbering like "1. My Title"
+      .filter(Boolean);
+  }
+  return [String(input)];
+}
+
 // 0. API: Check Ollama connection status and installed models
 app.post("/api/check-ollama-status", async (req, res) => {
   const { ollamaUrl } = req.body;
@@ -634,12 +747,12 @@ app.post("/api/generate-ideas", async (req, res) => {
       const prompt = `Buatkan 10 ide judul konten YouTube viral yang sangat menarik (CTR tinggi) beserta hook singkat untuk niche "${niche}" dengan bahasa "${language || "Indonesia"}" dalam style "${style}". Target audiens adalah: ${audience || "Global"}. Kembali hasilnya dalam format JSON array of string saja tanpa penanda markdown. Contoh format: ["Judul 1 (Hook: Kalimat)","Judul 2...", ...]`;
 
       const responseText = await queryOllama(ollamaUrl, ollamaModel, systemInstruction, prompt, true);
-      const parsed = JSON.parse(responseText || "[]");
+      const normalizedIdeas = normalizeStringArray(responseText);
 
       return res.json({
         success: true,
         mode: "ollama",
-        ideas: Array.isArray(parsed) ? parsed : [parsed],
+        ideas: normalizedIdeas,
       });
     } catch (err: any) {
       console.warn("Ollama query failed, falling back to simulated high-quality response:", err.message);
@@ -665,12 +778,12 @@ app.post("/api/generate-ideas", async (req, res) => {
     });
 
     const text = response.text || "[]";
-    const parsed = JSON.parse(text);
+    const normalizedIdeas = normalizeStringArray(text);
 
     res.json({
       success: true,
       mode: "api",
-      ideas: Array.isArray(parsed) ? parsed : [parsed],
+      ideas: normalizedIdeas,
     });
   } catch (error: any) {
     res.status(500).json({
@@ -738,7 +851,7 @@ Naskah HARUS dibagi menjadi 4 bagian dengan struktur JSON ini saja:
 Kembali hasil valid JSON murni tanpa penanda markdown.`;
 
       const responseText = await queryOllama(ollamaUrl, ollamaModel, systemPrompt, prompt, true);
-      const script = JSON.parse(responseText || "{}");
+      const script = parseRobustJson(responseText || "{}", {});
 
       return res.json({
         success: true,
@@ -792,7 +905,7 @@ Berikan output hanya dalam teks JSON murni tanpa penanda markdown.`;
     });
 
     const text = response.text || "{}";
-    const script = JSON.parse(text);
+    const script = parseRobustJson(text, {});
 
     res.json({
       success: true,
@@ -896,7 +1009,7 @@ Untuk setiap scene, Anda harus generate detail berikut dalam format JSON:
 Kembali hasil valid JSON murni tanpa penanda markdown.`;
 
       const responseText = await queryOllama(ollamaUrl, ollamaModel, systemPrompt, prompt, true);
-      const parsed = JSON.parse(responseText || "{}");
+      const parsed = parseRobustJson(responseText || "{}", {});
       const scenes = parsed.scenes || parsed;
 
       return res.json({
@@ -951,7 +1064,7 @@ Kembalikan respon hanya dalam valid JSON murni tanpa penanda markdown.`;
     });
 
     const text = response.text || "{}";
-    const parsed = JSON.parse(text);
+    const parsed = parseRobustJson(text, {});
     const scenes = parsed.scenes || parsed;
 
     res.json({
