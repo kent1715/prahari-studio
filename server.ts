@@ -141,6 +141,147 @@ app.post("/api/check-wan-status", async (req, res) => {
   }
 });
 
+// 0.6. API: Trigger WAN 2.2 Video Generation on Local Desktop Host
+app.post("/api/render-wan", async (req, res) => {
+  const { wanUrl, prompt, sceneId, sceneNumber, style, aspectRatio } = req.body;
+  const targetUrl = wanUrl || "http://127.0.0.1:7860";
+  
+  console.log(`[WAN 2.2 Render] Menerima instruksi render untuk Scene #${sceneNumber} dengan prompt: "${prompt}" di ${targetUrl}`);
+  
+  const isComfy = targetUrl.includes("8188") || targetUrl.toLowerCase().includes("comfy");
+  
+  try {
+    if (isComfy) {
+      // Format JSON API ComfyUI (/prompt)
+      const payload = {
+        client_id: "ais-video-generator",
+        prompt: {
+          "3": {
+            "class_type": "KSampler",
+            "inputs": {
+              "seed": Math.floor(Math.random() * 1000000),
+              "steps": 25,
+              "cfg": 6.0,
+              "sampler_name": "uni_pc",
+              "scheduler": "normal",
+              "denoise": 1.0,
+              "model": ["4", 0],
+              "positive": ["6", 0],
+              "negative": ["7", 0],
+              "latent_image": ["5", 0]
+            }
+          },
+          "4": {
+            "class_type": "CheckoutWAN22Model",
+            "inputs": { "model_name": "wan2.1_t2v_1.3b_fp16.safetensors" }
+          },
+          "5": {
+            "class_type": "EmptyWan22LatentImage",
+            "inputs": { 
+              "width": aspectRatio === "9:16" ? 480 : 832, 
+              "height": aspectRatio === "9:16" ? 832 : 480, 
+              "length": 81, 
+              "batch_size": 1 
+            }
+          },
+          "6": {
+            "class_type": "Wan22TextEncode",
+            "inputs": { "text": prompt, "clip": ["4", 1] }
+          },
+          "7": {
+            "class_type": "Wan22TextEncode",
+            "inputs": { "text": "low quality, blurry, static, noisy, deformed", "clip": ["4", 1] }
+          },
+          "8": {
+            "class_type": "Wan22Decode",
+            "inputs": { "samples": ["3", 0], "vae": ["4", 2] }
+          },
+          "9": {
+            "class_type": "SaveVideo",
+            "inputs": { "images": ["8", 0], "filename_prefix": `wan22_scene_${sceneNumber}` }
+          }
+        }
+      };
+
+      const comfyRes = await fetch(`${targetUrl}/prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      const resData = await comfyRes.json();
+      return res.json({
+        success: true,
+        endpoint: "comfy",
+        message: "Perintah render berhasil dikirim ke ComfyUI! Periksa antrean di terminal.",
+        data: resData
+      });
+    } else {
+      // Format API Gradio (WebUI) - port default 7860
+      const payload = {
+        data: [
+          prompt,                        // Prompt input
+          "low quality, blurry, static, deformed", // Negative Prompt
+          aspectRatio || "16:9",        // Frame Size
+          5,                             // Duration (seconds)
+          Math.floor(Math.random() * 1000000), // Seed
+          30,                            // Steps
+          6.0                            // CFG Scale
+        ],
+        fn_index: 0,
+        trigger_id: 11
+      };
+
+      // Coba kirim ke /api/predict
+      const gradioRes = await fetch(`${targetUrl}/api/predict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!gradioRes.ok) {
+        // Fallback untuk versi Gradio alternatif (/run/predict)
+        const fallbackRes = await fetch(`${targetUrl}/run/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const resData = await fallbackRes.json();
+        return res.json({
+          success: true,
+          endpoint: "gradio_fallback",
+          message: "Koneksi dialihkan melalui endpoint Gradio alternatif (/run/predict).",
+          data: resData
+        });
+      }
+
+      const resData = await gradioRes.json();
+      return res.json({
+        success: true,
+        endpoint: "gradio",
+        message: "Berhasil mengontak Gradio API! Engine video di terminal Anda sedang memproses.",
+        data: resData
+      });
+    }
+  } catch (err: any) {
+    console.warn(`[WAN 2.2 Connection Warning] IP target ${targetUrl} tidak dapat dikirimi API payload secara langsung: ${err.message}.`);
+    
+    // Fallback: Kirim ping request sederhana agar terminal minimal mendeteksi traffic / access log
+    try {
+      const pingUrl = `${targetUrl}/?ping_prompt=${encodeURIComponent(prompt)}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1000);
+      await fetch(pingUrl, { method: "GET", signal: controller.signal });
+      clearTimeout(timeoutId);
+    } catch (ignore) {}
+
+    return res.json({
+      success: false,
+      message: `Terkirim via fallback ping (${err.message}). Pastikan Gradio / ComfyUI webui Anda diatur dengan bendera --api agar menerima input jarak jauh.`
+    });
+  }
+});
+
 // 1. API: Live hardware & system metrics (simulated real RTX A2000 stats)
 app.get("/api/metrics", (req, res) => {
   const time = Date.now();

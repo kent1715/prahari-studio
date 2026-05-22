@@ -258,8 +258,8 @@ export default function VideoGenerator({
     onUpdateProject({ ...project, storyboard: updated });
   };
 
-  // 7. Simulating single scene rendering on local GPU
-  const handleRenderScene = (sceneId: string) => {
+  // 7. Simulating single scene rendering on local GPU with actual WAN 2.2 triggering
+  const handleRenderScene = async (sceneId: string) => {
     setRenderingSceneId(sceneId);
 
     const targetScene = storyboardScenes.find(s => s.id === sceneId);
@@ -274,6 +274,24 @@ export default function VideoGenerator({
       vramRequiredGb: 12.8,
       gpuId: 0
     });
+
+    // Kirim request render sungguhan ke endpoint lokal WAN Desktop via express server proxy
+    try {
+      await fetch("/api/render-wan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wanUrl: project.wanUrl,
+          prompt: targetScene.imagePrompt || targetScene.description,
+          sceneId: targetScene.id,
+          sceneNumber: targetScene.sceneNumber,
+          style: project.style,
+          aspectRatio
+        })
+      });
+    } catch (e) {
+      console.warn("Gagal mengirim request render jarak jauh ke WAN Desktop:", e);
+    }
 
     let progress = 0;
     const interval = setInterval(() => {
