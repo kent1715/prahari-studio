@@ -51,6 +51,13 @@ export default function VideoGenerator({
   const [enhancingSceneId, setEnhancingSceneId] = useState<string | null>(null);
   const [renderingSceneId, setRenderingSceneId] = useState<string | null>(null);
 
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  const showToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
   // Synchronize local state when active project changes
   useEffect(() => {
     setTopicPrompt(project.niche || "");
@@ -120,7 +127,7 @@ export default function VideoGenerator({
   // 3. Generate Complete Script from Title
   const handleGenerateScript = async () => {
     if (!project.title.trim()) {
-      alert("Pilih judul video terlebih dahulu! Anda bisa memilih dari ide kreatif.");
+      showToast("Pilih judul video terlebih dahulu! Anda bisa memilih dari ide kreatif.", "error");
       return;
     }
     setLoadingScript(true);
@@ -143,7 +150,7 @@ export default function VideoGenerator({
         const data = await res.json();
         const sc = data.script;
         if (data.message) {
-          alert(data.message);
+          showToast(data.message);
         }
         setScriptText({
           hook: sc.hook,
@@ -164,7 +171,7 @@ export default function VideoGenerator({
         });
       }
     } catch (e) {
-      alert("Gagal generate naskah.");
+      showToast("Gagal memproses hasil generate naskah.", "error");
     } finally {
       setLoadingScript(false);
     }
@@ -174,7 +181,7 @@ export default function VideoGenerator({
   const handleGenerateStoryboard = async () => {
     const fullText = `${scriptText.hook}\n\n${scriptText.intro}\n\n${scriptText.mainStory}\n\n${scriptText.cta}`;
     if (!fullText.replace(/\s/g, "")) {
-      alert("Tulis atau generate naskah drama terlebih dahulu!");
+      showToast("Tulis atau generate naskah drama terlebih dahulu!", "error");
       return;
     }
     setLoadingStoryboard(true);
@@ -193,7 +200,7 @@ export default function VideoGenerator({
       if (res.ok) {
         const data = await res.json();
         if (data.message) {
-          alert(data.message);
+          showToast(data.message);
         }
         const mappedScenes = data.scenes.map((s: any) => ({
           ...s,
@@ -208,7 +215,7 @@ export default function VideoGenerator({
         });
       }
     } catch (e) {
-      alert("Gagal membagi naskah menjadi storyboard.");
+      showToast("Gagal membagi naskah menjadi storyboard.", "error");
     } finally {
       setLoadingStoryboard(false);
     }
@@ -339,7 +346,7 @@ export default function VideoGenerator({
       utterance.rate = project.voiceSpeed || 1.0;
       window.speechSynthesis.speak(utterance);
     } else {
-      alert("Browser Anda tidak mendukung suara sintesis web.");
+      showToast("Browser Anda tidak mendukung suara sintesis web.", "error");
     }
   };
 
@@ -765,6 +772,18 @@ export default function VideoGenerator({
           </div>
         </div>
       </div>
+
+      {/* Floating Notification Toast */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 bg-[#121214] border px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce ${
+          toast.type === "error" ? "border-rose-500" : "border-[#ff5a1f]"
+        }`}>
+          <div className={`h-2 w-2 rounded-full animate-ping ${
+            toast.type === "error" ? "bg-rose-500" : "bg-[#ff5a1f]"
+          }`} />
+          <span className="font-mono text-[11px] leading-none uppercase tracking-wide text-neutral-100">{toast.message}</span>
+        </div>
+      )}
     </div>
   );
 }

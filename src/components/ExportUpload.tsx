@@ -9,8 +9,14 @@ interface ExportUploadProps {
 }
 
 export default function ExportUpload({ project, onUpdateProject, onAddQueue }: ExportUploadProps) {
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [compiling, setCompiling] = useState(false);
   const [compileProgress, setCompileProgress] = useState(0);
+
+  const showToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   const [youtubeChannelId, setYoutubeChannelId] = useState("UC-WAN-Auto-Creator");
   const [videoTags, setVideoTags] = useState("WAN 2.2, Alur Cerita AI, Sejarah Mistis, YouTube Automation");
@@ -29,7 +35,7 @@ export default function ExportUpload({ project, onUpdateProject, onAddQueue }: E
   // Trigger compiler to glue scenes, narration, BGM, sfx and subtitles together
   const handleCompile = () => {
     if (!project.storyboard || project.storyboard.length === 0) {
-      alert("Buat storyboard dan naskah terlebih dahulu!");
+      showToast("Buat storyboard dan naskah terlebih dahulu sebelum merakit video!", "error");
       return;
     }
 
@@ -219,6 +225,18 @@ export default function ExportUpload({ project, onUpdateProject, onAddQueue }: E
           )}
         </div>
       </div>
+
+      {/* Floating Notification Toast */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 bg-[#121214] border px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce ${
+          toast.type === "error" ? "border-rose-500" : "border-[#ff5a1f]"
+        }`}>
+          <div className={`h-2 w-2 rounded-full animate-ping ${
+            toast.type === "error" ? "bg-rose-500" : "bg-[#ff5a1f]"
+          }`} />
+          <span className="font-mono text-[11px] leading-none uppercase tracking-wide text-neutral-100">{toast.message}</span>
+        </div>
+      )}
     </div>
   );
 }

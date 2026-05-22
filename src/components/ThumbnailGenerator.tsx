@@ -8,6 +8,15 @@ interface ThumbnailGeneratorProps {
 }
 
 export default function ThumbnailGenerator({ project, onUpdateProject }: ThumbnailGeneratorProps) {
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  const showToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4000);
+  };
+
   const defaultConfig: ThumbnailConfig = {
     title: project.title ? `RAHASIA BESAR: ${project.title}` : "MISTERI DUNIA YANG TERKUBUR!",
     style: "cinematic",
@@ -301,21 +310,57 @@ export default function ThumbnailGenerator({ project, onUpdateProject }: Thumbna
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
             <button
-              onClick={() => alert("Thumbnail model berhasil di-render dan digabungkan ke aset project!")}
-              className="flex-1 bg-[#ff5a1f] text-white hover:bg-[#e04a15] text-xs font-semibold px-4 py-2.5 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer duration-150"
+              onClick={() => {
+                onUpdateProject({
+                  ...project,
+                  thumbnail: {
+                    ...config,
+                    customImage: placeholderBgs[bgIndex]
+                  }
+                });
+                showToast("Aset Thumbnail CTR berhasil dirakit dan disimpan ke database proyek!");
+              }}
+              className="flex-1 bg-[#ff5a1f] hover:bg-[#e04a15] text-white text-xs font-semibold px-4 py-2.5 rounded-lg flex items-center justify-center gap-1.5 cursor-pointer duration-150 transition-all select-none active:scale-95"
             >
               <Sparkles className="h-4 w-4" />
               <span>Simpan Thumbnail ke Project</span>
             </button>
             <button
-              onClick={() => alert("Mengunduh file pratinjau PNG secara offline...")}
-              className="bg-neutral-800 text-neutral-200 hover:bg-neutral-700 text-xs font-medium px-4 py-2.5 rounded-lg flex items-center justify-center cursor-pointer"
+              onClick={async () => {
+                try {
+                  showToast("Mempersiapkan penarikan latar belakang UHD...");
+                  const imgUrl = placeholderBgs[bgIndex];
+                  const res = await fetch(imgUrl);
+                  const blob = await res.blob();
+                  const blobUrl = window.URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = blobUrl;
+                  a.download = `thumbnail_wan22_${project.id || "export"}.png`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  window.URL.revokeObjectURL(blobUrl);
+                  showToast("Sukses mengunduh latar belakang proyek!");
+                } catch (e) {
+                  window.open(placeholderBgs[bgIndex], "_blank");
+                  showToast("Latar UHD telah dibuka di tab baru untuk disimpan.");
+                }
+              }}
+              className="bg-neutral-800 text-neutral-200 hover:bg-neutral-700 text-xs font-medium px-4 py-2.5 rounded-lg flex items-center justify-center cursor-pointer transition-all active:scale-95 select-none"
             >
               Ekspor Latar Belakang (.PNG)
             </button>
           </div>
         </div>
       </div>
+
+      {/* Floating Notification Toast */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#121214] border border-[#ff5a1f] text-neutral-100 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 animate-bounce">
+          <div className="h-2 w-2 rounded-full bg-[#ff5a1f] animate-ping" />
+          <span className="font-mono text-[11px] leading-none uppercase tracking-wide">{toast.message}</span>
+        </div>
+      )}
     </div>
   );
 }
