@@ -1,0 +1,6 @@
+{
+  "name": "KentStudio",
+  "description": "Sistem desktop otomatisasi pembuatan konten video YouTube faceless menggunakan AI Script, Voice Over, Storyboard, dan Video generator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
