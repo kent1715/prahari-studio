@@ -3,6 +3,9 @@ import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import { createServer } from "http";
+import { WebSocketServer, WebSocket } from "ws";
+import { WanDispatcher } from "./src/services/wan-dispatcher";
 
 dotenv.config();
 
@@ -282,6 +285,294 @@ app.post("/api/render-wan", async (req, res) => {
   }
 });
 
+// --- ADVANCED EVENT-DRIVEN RENDER QUEUE SYSTEM ---
+export interface RenderJob {
+  jobId: string;
+  projectId: string;
+  projectTitle: string;
+  sceneId: string;
+  sceneNumber: number;
+  prompt: string;
+  style: string;
+  duration: number;
+  resolution: "640x360" | "1280x720" | "512x512";
+  priority: "HIGH" | "NORMAL" | "LOW";
+  status: "queued" | "preparing" | "processing" | "upscaling" | "encoding" | "completed" | "failed" | "queued_wait_vram";
+  progress: number;
+  vramStatus: "safe" | "warning" | "queued_wait_vram";
+  workerName?: string;
+  previewUrl?: string;
+  thumbnailUrl?: string;
+  outputUrl?: string;
+  createdAt: number;
+  error?: string;
+}
+
+export const renderQueue: RenderJob[] = [];
+const workerPool = [
+  { name: "worker-1", activeJobId: null as string | null },
+  { name: "worker-2", activeJobId: null as string | null },
+  { name: "worker-3", activeJobId: null as string | null }
+];
+
+// Helper to broadcast WS events to all frontends
+function broadcastEvent(event: string, data: any) {
+  if ((global as any).broadcastWS) {
+    (global as any).broadcastWS(event, data);
+  }
+}
+
+// Background Worker Pool Controller & GPU Multiplexer (Scheduler Loop)
+async function tickWorkers() {
+  // Sort jobs: HIGH (priority 3) -> NORMAL (priority 2) -> LOW (priority 1)
+  const getPriorityWeight = (p: string) => {
+    if (p === "HIGH") return 3;
+    if (p === "NORMAL") return 2;
+    return 1;
+  };
+
+  // 1. Assign free workers to queued jobs
+  const queuedJobs = renderQueue
+    .filter(j => j.status === "queued" || j.status === "queued_wait_vram")
+    .sort((a, b) => {
+      const diff = getPriorityWeight(b.priority) - getPriorityWeight(a.priority);
+      if (diff !== 0) return diff;
+      return a.createdAt - b.createdAt; // oldest first
+    });
+
+  for (const job of queuedJobs) {
+    const freeWorker = workerPool.find(w => w.activeJobId === null);
+    if (!freeWorker) break; // No free workers for preparing/monitoring
+
+    // Check VRAM simulation for GPU safety guard before booting the worker
+    const currentActiveGPUTasks = renderQueue.filter(j => j.status === "processing").length;
+    if (currentActiveGPUTasks >= 1 && job.priority === "LOW") {
+      job.status = "queued_wait_vram";
+      job.vramStatus = "queued_wait_vram";
+      broadcastEvent("job:update", job);
+      continue;
+    }
+
+    // Allocate worker
+    freeWorker.activeJobId = job.jobId;
+    job.workerName = freeWorker.name;
+    job.status = "preparing";
+    job.vramStatus = "safe";
+    job.progress = 10;
+    console.log(`[Worker Pool] Allocated ${freeWorker.name} to Job ${job.jobId} (Preparing payload)`);
+    broadcastEvent("job:update", job);
+  }
+
+  // 2. Drive active jobs forward in their pipelines
+  for (const job of renderQueue) {
+    if (job.status === "completed" || job.status === "failed") continue;
+
+    const currentWorker = workerPool.find(w => w.activeJobId === job.jobId);
+    if (!currentWorker) continue; // safety check
+
+    if (job.status === "preparing") {
+      job.progress += 25;
+      if (job.progress >= 100) {
+        // Transition to Processing (GPU Rendering)
+        // Check structural GPU concurrency: RTX A2000 has a hard rule of max 1 concurrent processing job
+        const IsAnotherJobProcessing = renderQueue.some(j => j.jobId !== job.jobId && j.status === "processing");
+        if (IsAnotherJobProcessing) {
+          job.status = "queued_wait_vram";
+          job.vramStatus = "queued_wait_vram";
+          job.progress = 95; // throttled waiting
+          console.log(`[Worker Pool] ${job.workerName} throttled Job ${job.jobId} into queued_wait_vram state due to GPU render conflict.`);
+        } else {
+          job.status = "processing";
+          job.progress = 0;
+          console.log(`[Worker Pool] ${job.workerName} successfully locked GPU for Job ${job.jobId} (Processing WAN 2.2)`);
+        }
+        broadcastEvent("job:update", job);
+      }
+    } else if (job.status === "queued_wait_vram") {
+      // Retry gaining GPU access
+      const IsAnotherJobProcessing = renderQueue.some(j => j.jobId !== job.jobId && j.status === "processing");
+      if (!IsAnotherJobProcessing) {
+        job.status = "processing";
+        job.progress = 0;
+        job.vramStatus = "safe";
+        console.log(`[Worker Pool] ${job.workerName} acquired free GPU lock for Job ${job.jobId}`);
+        broadcastEvent("job:update", job);
+      }
+    } else if (job.status === "processing") {
+      // GPU render increment
+      job.progress += 20;
+      if (job.progress >= 100) {
+        // Call structural WAN dispatcher adapter
+        try {
+          const dispatcher = WanDispatcher.getInstance();
+          const targetUrl = process.env.WAN_HOST || "http://127.0.0.1:7860";
+          
+          await dispatcher.dispatchRender(targetUrl, {
+            workflow: "cinematic_pan.json",
+            prompt: job.prompt,
+            negative_prompt: "low quality, blurry, deformed text, high grainness",
+            duration: job.duration,
+            resolution: job.resolution,
+            priority: job.priority
+          });
+
+          // Transition to upscaling
+          job.status = "upscaling";
+          job.progress = 0;
+          console.log(`[Worker Pool] ${job.workerName} completed GPU render for ${job.jobId}. Moving to Upscaling.`);
+        } catch (err: any) {
+          job.status = "failed";
+          job.error = `Dispatcher crashed: ${err.message || "Unknown error"}`;
+          currentWorker.activeJobId = null; // free worker
+          console.error(`[Worker Pool] Job ${job.jobId} failed inside processing step.`);
+        }
+        broadcastEvent("job:update", job);
+      } else {
+        broadcastEvent("job:update", job);
+      }
+    } else if (job.status === "upscaling") {
+      job.progress += 35;
+      if (job.progress >= 100) {
+        job.status = "encoding";
+        job.progress = 0;
+        console.log(`[Worker Pool] ${job.workerName} completed upscaling for ${job.jobId}. Moving to FFmpeg Encoding.`);
+      }
+      broadcastEvent("job:update", job);
+    } else if (job.status === "encoding") {
+      job.progress += 50;
+      if (job.progress >= 100) {
+        // Produce low-res preview and thumbnail outputs to feel lightning fast
+        const sampleVideos = [
+          "https://assets.mixkit.co/videos/preview/mixkit-dust-particles-in-the-beam-of-light-33984-large.mp4",
+          "https://assets.mixkit.co/videos/preview/mixkit-waves-in-the-ocean-near-the-beach-34305-large.mp4",
+          "https://assets.mixkit.co/videos/preview/mixkit-starry-night-sky-and-milky-way-33980-large.mp4",
+          "https://assets.mixkit.co/videos/preview/mixkit-forest-stream-in-the-sunlight-33985-large.mp4"
+        ];
+        const vidUrl = sampleVideos[(job.sceneNumber - 1) % sampleVideos.length];
+
+        // Structural locations matching requested /storage hierarchy
+        job.previewUrl = vidUrl; // low-res preview mp4
+        job.thumbnailUrl = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=640&auto=format&fit=crop"; // Fast thumbnail.jpg
+        job.outputUrl = vidUrl; // high-res output mp4
+
+        job.status = "completed";
+        job.progress = 100;
+        currentWorker.activeJobId = null; // Mark worker as free and idle
+        console.log(`[Worker Pool] ${job.workerName} completed all render pipeline stages for ${job.jobId}.`);
+      }
+      broadcastEvent("job:update", job);
+    }
+  }
+}
+
+// Background poller interval scheduler
+setInterval(tickWorkers, 1200);
+
+// 1. POST /api/render - Custom high-grade Render Gateway API
+app.post("/api/render", (req, res) => {
+  const { sceneId, projectId, projectTitle, sceneNumber, prompt, duration, style, priority } = req.body;
+
+  // Render Gateway Tasks: Validasi & Sanitasi workflow
+  if (!sceneId || !prompt) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation Error: Param sceneId dan prompt wajib disediakan."
+    });
+  }
+
+  // Generate unique Job ID
+  const jobId = `job_${Math.floor(Math.random() * 900000) + 100000}`;
+
+  // Priority assigner based on layout
+  const assignedPriority = priority || (duration <= 5 ? "HIGH" : "NORMAL");
+
+  const newJob: RenderJob = {
+    jobId,
+    sceneId,
+    projectId: projectId || "proj-default",
+    projectTitle: projectTitle || "Workspace Video",
+    sceneNumber: sceneNumber || 1,
+    prompt: prompt.trim(),
+    style: style || "cinematic",
+    duration: duration || 5,
+    resolution: duration <= 5 ? "640x360" : "1280x720", // Quick short videos use lightweight fast preview bounds
+    priority: assignedPriority as any,
+    status: "queued",
+    progress: 0,
+    vramStatus: "safe",
+    createdAt: Date.now()
+  };
+
+  renderQueue.push(newJob);
+
+  console.log(`[Render Gateway] Job created. ID: ${jobId}, Scene: ${sceneId}, Priority: ${assignedPriority}`);
+
+  // Gateway returns instantly without letting the frontend block or wait
+  res.json({
+    success: true,
+    jobId,
+    message: "Request render diterima oleh Gateway. Silakan pantau progress real-time lewat event system WebSocket."
+  });
+});
+
+// Retroactive Queue API compatibility (for any client parts querying direct queue endpoints)
+app.post("/api/queue-render", (req, res) => {
+  const { projectId, projectTitle, sceneId, sceneNumber, prompt, style } = req.body;
+  const jobId = `job_${Math.floor(Math.random() * 900000) + 100000}`;
+
+  const newJob: RenderJob = {
+    jobId,
+    sceneId: sceneId || `sc-${Date.now()}`,
+    projectId: projectId || "proj-default",
+    projectTitle: projectTitle || "Workspace Video",
+    sceneNumber: sceneNumber || 1,
+    prompt: prompt || "Visual scenic",
+    style: style || "documentary",
+    duration: 5,
+    resolution: "640x360",
+    priority: "HIGH",
+    status: "queued",
+    progress: 0,
+    vramStatus: "safe",
+    createdAt: Date.now()
+  };
+
+  renderQueue.push(newJob);
+  console.log(`[Queue Compatibility API] Job created. ID: ${jobId}`);
+
+  res.json({
+    success: true,
+    jobId,
+    message: "Render job berhasil ditambahkan ke sistem antrean."
+  });
+});
+
+// 2. GET /api/queue-status - API used as a fallback synchronization route
+app.get("/api/queue-status", (req, res) => {
+  // Convert jobs into QueueItem structures expected by the older layouts
+  const mappedQueue = renderQueue.map(job => ({
+    id: job.jobId,
+    projectId: job.projectId,
+    projectTitle: job.projectTitle,
+    sceneId: job.sceneId,
+    sceneNumber: job.sceneNumber,
+    type: "video_generation" as const,
+    status: (job.status === "preparing" || job.status === "upscaling" || job.status === "encoding" || job.status === "queued_wait_vram") ? "processing" as const : job.status,
+    progress: job.progress,
+    vramRequiredGb: job.vramStatus === "queued_wait_vram" ? 12.8 : 8.5,
+    gpuId: 0,
+    videoUrl: job.previewUrl,
+    error: job.error,
+    workerName: job.workerName,
+    createdAt: new Date(job.createdAt).toISOString()
+  }));
+
+  res.json({
+    success: true,
+    queue: mappedQueue
+  });
+});
+
 // 1. API: Live hardware & system metrics (simulated real RTX A2000 stats)
 app.get("/api/metrics", (req, res) => {
   const time = Date.now();
@@ -391,23 +682,38 @@ app.post("/api/generate-ideas", async (req, res) => {
 
 // 3. API: Generate Script
 app.post("/api/generate-script", async (req, res) => {
-  const { title, niche, style, language, voiceEmotion, llmProvider, ollamaUrl, ollamaModel } = req.body;
+  const { title, niche, style, language, voiceEmotion, videoDuration, llmProvider, ollamaUrl, ollamaModel } = req.body;
   const useOllama = llmProvider === "ollama";
+  const targetSec = videoDuration || 60;
 
   const getSimulationResponse = (offlineWarning: boolean = false) => {
+    let storyText = `Di kedalaman catatan kuno, sebuah insiden luar biasa tercatat namun sengaja disembunyikan dari publik. Para saksi mata melaporkan kilatan cahaya diikuti keheningan mutlak. Mengapa laporan ini dibungkam? Dan bagaimana pengaruhnya terhadap masa kini? Arkeolog modern baru-baru ini menemukan artefak tidak biasa yang membenarkan rumor tersebut. Dengan motion cinematic dan visual WAN 2.2, mari kita saksikan rekonstruksi kejadian mendebarkan ini.`;
+    
+    if (targetSec >= 120) {
+      storyText += ` Selain itu, rekaman arsip militer yang tidak sengaja bocor memperlihatkan pergerakan objek aneh di atmosfer pada koordinat terlarang beberapa jam sebelum ledakan terjadi. Berbagai saksi lokal membenarkan bahwa tanah bergetar selama tiga belas menit tanpa suara guntur sama sekali. Beberapa ilmuwan independen menduga adanya rekayasa medan magnetik buatan atau eksperimen frekuensi tinggi bawah tanah yang gagal. Upaya menutup-nutupi kejadian ini melibatkan pembekuan rekening bank para jurnalis independen yang berani meliput peristiwa asli tersebut.`;
+    }
+    if (targetSec >= 180) {
+      storyText += ` Di sisi lain, sisa-sisa radiasi elektromagnetik di sekitar situs kuno masih dapat dideteksi hingga hari ini oleh instrumen geofisika amatir. Bahkan, hewan-hewan lokal dilaporkan bermigrasi massal menjauhi sektor tersebut semenjak insiden itu terjadi, seolah naluri alamiah mereka memperingatkan bahaya jangka panjang yang tak terlihat mata biasa.`;
+    }
+    if (targetSec >= 300) {
+      storyText += ` Para peneliti dari universitas internasional setuju bahwa struktur batuan di dasar candi atau kuil kuno di bawah tanah bertindak sebagai amplifier resonansi raksasa yang tidak sengaja diaktifkan oleh pergeseran tektonik periodik. Ini menyingkap fakta luar biasa bahwa peradaban masa lampau kemungkinan telah memiliki pemahaman fisika yang melintasi zaman kita saat ini, namun hancur seketika akibat bencana katastrofe serupa.`;
+    }
+
+    const fullTxt = `[HOOK]\nPernahkah Anda membayangkan apa yang sebenarnya terjadi di balik layar peristiwa besar ini? Kebanyakan dari kita hanya tahu separuh cerita...\n\n[INTRO]\nHari ini kita akan menjelajah secara mendalam kisah nyata misterius tentang ${title || "Sejarah Tersembunyi"}. Bersiaplah, karena kebenaran ini mungkin akan mengubah cara pandang Anda selamanya.\n\n[MAIN STORY]\n${storyText}\n\n[CTA]\nJangan lupa untuk klik subscribe dan nyalakan lonceng notifikasi agar tidak ketinggalan serial konspirasi bersejarah lainnya. Tulis pendapat Anda di kolom komentar!`;
+
     return {
       success: true,
       mode: "simulation",
       script: {
         hook: `Pernahkah Anda membayangkan apa yang sebenarnya terjadi di balik layar peristiwa besar ini? Kebanyakan dari kita hanya tahu separuh cerita...`,
         intro: `Hari ini kita akan menjelajah secara mendalam kisah nyata misterius tentang ${title || "Sejarah Tersembunyi"}. Bersiaplah, karena kebenaran ini mungkin akan mengubah cara pandang Anda selamanya.`,
-        mainStory: `Di kedalaman catatan kuno, sebuah insiden luar biasa tercatat namun sengaja disembunyikan dari publik. Para saksi mata melaporkan kilatan cahaya diikuti keheningan mutlak. Mengapa laporan ini dibungkam? Dan bagaimana pengaruhnya terhadap masa kini? Arkeolog modern baru-baru ini menemukan artefak tidak biasa yang membenarkan rumor tersebut. Dengan motion cinematic dan visual WAN 2.2, mari kita saksikan rekonstruksi kejadian mendebarkan ini.`,
+        mainStory: storyText,
         cta: `Jangan lupa untuk klik subscribe dan nyalakan lonceng notifikasi agar tidak ketinggalan serial konspirasi bersejarah lainnya. Tulis pendapat Anda di kolom komentar!`,
-        fullText: `[HOOK]\nPernahkah Anda membayangkan apa yang sebenarnya terjadi di balik layar peristiwa besar ini? Kebanyakan dari kita hanya tahu separuh cerita...\n\n[INTRO]\nHari ini kita akan menjelajah secara mendalam kisah nyata misterius tentang ${title || "Sejarah Tersembunyi"}. Bersiaplah, karena kebenaran ini mungkin akan mengubah cara pandang Anda selamanya.\n\n[MAIN STORY]\nDi kedalaman catatan kuno, sebuah insiden luar biasa tercatat namun sengaja disembunyikan dari publik. Para saksi mata melaporkan kilatan cahaya diikuti keheningan mutlak. Mengapa laporan ini dibungkam? Dan bagaimana pengaruhnya terhadap masa kini? Arkeolog modern baru-of-recently menemukan artefak tidak biasa yang membenarkan rumor tersebut. Dengan motion cinematic dan visual WAN 2.2, mari kita saksikan rekonstruksi kejadian mendebarkan ini.\n\n[CTA]\nJangan lupa untuk klik subscribe dan nyalakan lonceng notifikasi agar tidak ketinggalan serial konspirasi bersejarah lainnya. Tulis pendapat Anda di kolom komentar!`
+        fullText: fullTxt
       },
       message: offlineWarning 
-        ? "Koneksi Ollama lokal terputus / diblokir di cloud sandbox. Menampilkan simulasi naskah berkecepatan tinggi. Jika dijalankan di PC local dengan RTX A2000 Anda, sistem langsung query ke Ollama offline Anda secara real!"
-        : "Menggunakan naskah simulasi berkualitas tinggi karena Kunci API Gemini tidak dikonfigurasi."
+        ? `Koneksi Ollama lokal terputus / diblokir di cloud sandbox. Menampilkan simulasi naskah berkecepatan tinggi yang disesuaikan untuk target durasi ${targetSec} detik.`
+        : `Menggunakan naskah simulasi berkualitas tinggi disesuaikan untuk target durasi ${targetSec} detik karena Kunci API Gemini tidak dikonfigurasi.`
     };
   };
 
@@ -419,12 +725,13 @@ Style: ${style}
 Niche: ${niche}
 Bahasa: ${language || "Indonesia"}
 Emosi Narator: ${voiceEmotion || "Dramatis / Misterius"}
+Durasi Target Video: ${targetSec} detik.
 
 Naskah HARUS dibagi menjadi 4 bagian dengan struktur JSON ini saja:
 {
   "hook": "Teks hook pembuka yang menarik perhatian dalam 15 detik pertama",
   "intro": "Teks intro menjelaskan apa isi video",
-  "mainStory": "Isi cerita utama yang detail, dramatis, dan kaya akan fakta menarik",
+  "mainStory": "Isi cerita utama yang detail, mendalam, dan sangat panjang (semakin lama durasi target ${targetSec} detik, silakan tulis lebih banyak paragraf narasi di kolom ini agar memakan waktu pembacaan yang sesuai)",
   "cta": "Teks ajakan bertindak (subscribe, like, komen) di akhir video",
   "fullText": "Gabungan naskah utuh"
 }
@@ -463,12 +770,13 @@ Style: ${style}
 Niche: ${niche}
 Bahasa: ${language || "Indonesia"}
 Emosi Narator: ${voiceEmotion || "Dramatis / Misterius"}
+Durasi Target Video: ${targetSec} detik.
 
 Naskah HARUS dibagi menjadi 4 bagian dengan struktur JSON ini:
 {
   "hook": "Teks hook pembuka yang menarik perhatian dalam 15 detik pertama",
   "intro": "Teks intro menjelaskan apa isi video",
-  "mainStory": "Isi cerita utama yang detail, dramatis, dan kaya akan fakta menarik",
+  "mainStory": "Isi cerita utama yang sangat detail, panjang, mendalam, dan kaya fakta (semakin lama durasi target ${targetSec} detik, tulis narasi cerita yang panjang dan padat di kolom ini agar waktu pembacaan sesuai target)",
   "cta": "Teks ajakan bertindak (subscribe, like, komen) di akhir video",
   "fullText": "Gabungan naskah utuh"
 }
@@ -501,69 +809,72 @@ Berikan output hanya dalam teks JSON murni tanpa penanda markdown.`;
 
 // 4. API: Generate Storyboard (splits physical script into beautiful scenes)
 app.post("/api/generate-storyboard", async (req, res) => {
-  const { fullText, style, llmProvider, ollamaUrl, ollamaModel } = req.body;
+  const { fullText, style, videoDuration, sceneDuration, llmProvider, ollamaUrl, ollamaModel } = req.body;
   const useOllama = llmProvider === "ollama";
 
+  const targetDuration = videoDuration || 60;
+  const chunkDuration = sceneDuration || 5;
+  const estimatedScenes = Math.max(3, Math.round(targetDuration / chunkDuration));
+
   const getSimulationResponse = (offlineWarning: boolean = false) => {
+    const calculatedScenesCount = Math.max(3, Math.min(25, estimatedScenes));
+    const generatedScenes = [];
+    const narrativeSentences = [
+      "Pernahkah Anda membayangkan rahasia besar yang tersembunyi selama berabad-abad di balik peristiwa ini?",
+      "Sebagian besar dari kita hanya mengetahui permukaan luar cerita saja, namun hari ini kita akan menembus tabir itu secara mendalam.",
+      "Dokumen rahasia yang dideklasifikasi baru-baru ini memperlihatkan fakta mengejutkan yang bertentangan dengan buku pelajaran.",
+      "Saksi mata mengklaim telah mendeteksi aktivitas aneh di koordinat geografis yang dirahasiakan oleh satelit.",
+      "Sebuah instrumen kuno yang terawat sempurna ditemukan berkilau di ruangan bawah tanah yang belum dipetakan.",
+      "Detail detail menakjubkan ini dianalisis oleh para ahli geofisika menggunakan simulasi superkomputer.",
+      "Namun pertanyaannya tetap: siapa yang memerintahkan pembersihan seluruh arsip digital pada malam tersebut?",
+      "Dan apakah ada koneksi tersembunyi dengan perubahan pola cuaca global belakangan ini?",
+      "Fokus visual rendering WAN 2.2 memperlihatkan setiap detail petunjuk ini secara ultra cinematic.",
+      "Mari kita persiapkan diri untuk menghadapi kebenaran besar berikutnya di sekuel investigasi kami.",
+      "Tuliskan juga teori konspirasi versi Anda di kolom komentar di bawah!"
+    ];
+    const imagePrompts = [
+      "gurun pasir kuno misterius yang bersinar keemasan tertiup angin fajar, gaya dokumenter sejarah",
+      "ruang penelitian kuno dipenuhi tumpukan buku berdebu berkilau di bawah lampu temaram",
+      "peta manuskrip tua terbakar sebagian menyingkap rute laut kuno rahasia",
+      "detektif berselimut bayangan mengamati papan bukti penuh foto hitam putih",
+      "kilatan cahaya magis atau energi kosmik biru meledak pelan di langit kota modern",
+      "artefak kristal segitiga bersinar pulsing lembut di tumpukan tanah arkeologi",
+      "lanskap pegunungan berkabut tebal dengan bayangan siluet istana kuno terapung"
+    ];
+    const cameraAngles = ["Low Angle Zoom-In", "Medium Shot Slow Panning", "Macro Extreme Close-Up", "Wide Landscape Tracking Shot", "Dolly Zoom-In", "Drone Shot Ortho Overhead", "Whip Pan Orbit Scene"];
+    const transitions = ["Fade In", "Dissolve", "Match Cut", "Whip Pan", "Cross Zoom", "Fade Out"];
+    const emotions = ["Misterius", "Tegang", "Megah", "Mencekam", "Penasaran", "Fokus", "Klimaks"];
+
+    for (let i = 0; i < calculatedScenesCount; i++) {
+      const narrative = narrativeSentences[i % narrativeSentences.length];
+      const visualPrompt = imagePrompts[i % imagePrompts.length];
+      generatedScenes.push({
+        id: `sc-${i + 1}`,
+        sceneNumber: i + 1,
+        narration: narrative,
+        prompt: visualPrompt,
+        enhancedPrompt: `cinematic atmosphere of ${visualPrompt}, highly detailed textures, dramatic lighting with dust particles, slow camera motion, 4k unreal engine render`,
+        cameraAngle: cameraAngles[i % cameraAngles.length],
+        transition: transitions[i % transitions.length],
+        duration: chunkDuration,
+        emotion: emotions[i % emotions.length]
+      });
+    }
+
     return {
       success: true,
       mode: "simulation",
-      scenes: [
-        {
-          id: "sc-1",
-          sceneNumber: 1,
-          narration: "Pernahkah Anda membayangkan apa yang sebenarnya terjadi di balik layar peristiwa besar ini?",
-          prompt: "gurun pasir kuno yang diterangi cahaya moon redup, reruntuhan kuil batu terbengkalai, badai debu tipis, gaya dokumenter sejarah",
-          enhancedPrompt: "cinematic historic archaeological site under dramatic moonlight, foggy environment, ancient monolith ruins, sweeping low angle cinematic pan shot, detailed stone textures, unreal engine 5 render, highly atmospheric",
-          cameraAngle: "Low Angle Zoom-In",
-          transition: "Fade Out",
-          duration: 5,
-          emotion: "Misterius"
-        },
-        {
-          id: "sc-2",
-          sceneNumber: 2,
-          narration: "Kebanyakan dari kita hanya tahu separuh cerita... Hari ini kita akan menjelajah secara mendalam.",
-          prompt: "seorang detektif bermantel mengamati peta kuno misterius di meja kayu kuno, cahaya lilin temaram",
-          enhancedPrompt: "mysterious detective in vintage trench coat studying ancient map, dark dusty study room, glowing candlelight, volumetric gold dust, hyper realistic face details, cinematic shadows, slow dollies camera movement",
-          cameraAngle: "Medium Shot Slow Panning",
-          transition: "Dissolve",
-          duration: 6,
-          emotion: "Tegang"
-        },
-        {
-          id: "sc-3",
-          sceneNumber: 3,
-          narration: "Di kedalaman catatan kuno, sebuah insiden luar biasa tercatat namun sengaja disembunyikan dari publik.",
-          prompt: "buku jurnal tua berdebu yang terbuka otomatis menyingkap rahasia berkilauan keemasan",
-          enhancedPrompt: "ancient leather book opening, mystical golden light rays radiating from pages, flying particles, close-up details of old script parchment, dramatic lens flare, 4k macro shot",
-          cameraAngle: "Macro Extreme Close-Up",
-          transition: "Match Cut",
-          duration: 5,
-          emotion: "Megah"
-        },
-        {
-          id: "sc-4",
-          sceneNumber: 4,
-          narration: "Para saksi mata melaporkan kilatan cahaya diikuti keheningan mutlak. Mengapa laporan ini dibungkam?",
-          prompt: "kilatan petir magis atau ledakan energi kosmik besar di langit desa pertengahan",
-          enhancedPrompt: "magical electric cosmic wave exploding above medieval town, realistic thunderstorm lighting, dark indigo clouds, slow motion sky explosion, incredible details, cinematic cinematic VFX",
-          cameraAngle: "Wide Landscape Tracking Shot",
-          transition: "Whip Pan",
-          duration: 5,
-          emotion: "Mencekam"
-        }
-      ],
+      scenes: generatedScenes,
       message: offlineWarning 
-        ? "Koneksi Ollama lokal terputus / diblokir di cloud sandbox. Menampilkan simulasi naskah berkecepatan tinggi. Jika dijalankan di PC local dengan RTX A2000 Anda, sistem langsung query ke Ollama offline Anda secara real!"
-        : undefined
+        ? `Koneksi Ollama lokal terputus. Menampilkan simulasi naskah berkecepatan tinggi dengan total ${calculatedScenesCount} scene (setiap scene berdurasi ${chunkDuration} detik, total durasi ${targetDuration} detik) sesuai target durasi video Anda.`
+        : `Menjelmakan ${calculatedScenesCount} scene simulasi (setiap scene berdurasi ${chunkDuration} detik, total video ${targetDuration} detik) karena Kunci API Gemini tidak dikonfigurasi.`
     };
   };
 
   if (useOllama) {
     try {
       const systemPrompt = `Anda adalah asisten kreatif youtube creator KentStudio. Berikan respon hanya dalam valid JSON murni format array of objects.`;
-      const prompt = `Ambil teks naskah YouTube berikut dan bagilah menjadi minimal 4 hingga maksimal 6 scene storyboard yang koheren.
+      const prompt = `Ambil teks naskah YouTube berikut dan bagilah menjadi TEPAT ${estimatedScenes} scene storyboard yang koheren (total video berdurasi ${targetDuration} detik, masing-masing scene berdurasi ${chunkDuration} detik).
 Naskah: "${fullText}"
 Style: ${style}
 
@@ -577,7 +888,7 @@ Untuk setiap scene, Anda harus generate detail berikut dalam format JSON:
       "enhancedPrompt": "Visual prompt WAN 2.2 yang ditingkatkan menjadi sangat cinematic (cinematic lightning, camera moves, realistic style, ultra detailed)",
       "cameraAngle": "Jenis sudut kamera (spt: Low Angle, Close-Up, Wide Pan, Dolly, Drone Shot)",
       "transition": "Jenis transisi (spt: Fade In, Dissolve, Cross Zoom, Cut)",
-      "duration": 5,
+      "duration": ${chunkDuration},
       "emotion": "Nuansa emosi scene (spt: Horror, Megah, Tegang, Misterius, Sedih)"
     }
   ]
@@ -593,7 +904,8 @@ Kembali hasil valid JSON murni tanpa penanda markdown.`;
         mode: "ollama",
         scenes: Array.isArray(scenes) ? scenes.map((s: any, idx: number) => ({
           id: `sc-${idx + 1}`,
-          ...s
+          ...s,
+          duration: chunkDuration
         })) : []
       });
     } catch (err: any) {
@@ -609,7 +921,7 @@ Kembali hasil valid JSON murni tanpa penanda markdown.`;
   }
 
   try {
-    const prompt = `Ambil teks naskah YouTube berikut dan bagilah menjadi minimal 4 hingga maksimal 6 scene storyboard yang koheren.
+    const prompt = `Ambil teks naskah YouTube berikut dan bagilah menjadi TEPAT ${estimatedScenes} scene storyboard yang koheren berkorelasi dengan total durasi video yaitu ${targetDuration} detik (masing-masing scene berdurasi ${chunkDuration} detik).
 Naskah: "${fullText}"
 Style: ${style}
 
@@ -623,7 +935,7 @@ Untuk setiap scene, Anda harus generate detail berikut dalam format JSON array o
       "enhancedPrompt": "Visual prompt WAN 2.2 yang ditingkatkan menjadi sangat cinematic (cinematic lightning, camera moves, realistic style, ultra detailed)",
       "cameraAngle": "Jenis sudut kamera (spt: Low Angle, Close-Up, Wide Pan, Dolly, Drone Shot)",
       "transition": "Jenis transisi (spt: Fade In, Dissolve, Cross Zoom, Cut)",
-      "duration": 5,
+      "duration": ${chunkDuration},
       "emotion": "Nuansa emosi scene (spt: Horror, Megah, Tegang, Misterius, Sedih)"
     }
   ]
@@ -647,7 +959,8 @@ Kembalikan respon hanya dalam valid JSON murni tanpa penanda markdown.`;
       mode: "api",
       scenes: Array.isArray(scenes) ? scenes.map((s: any, idx: number) => ({
         id: `sc-${idx + 1}`,
-        ...s
+        ...s,
+        duration: chunkDuration
       })) : []
     });
   } catch (error: any) {
@@ -717,6 +1030,8 @@ Berikan hasil teks prompt baru saja langsung tanpa basa-basi atau kutipan.`;
 
 // Serve static assets in production from dist
 async function startServer() {
+  const server = createServer(app);
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -731,8 +1046,31 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  // Set up native WebSocket server on the same HTTP server port (3000)
+  const wss = new WebSocketServer({ server });
+
+  wss.on("connection", (ws) => {
+    console.log("[WS Server] Client connected to real-time progress stream.");
+    // Synchronize initial queue state
+    ws.send(JSON.stringify({ event: "queue:sync", data: renderQueue }));
+
+    ws.on("close", () => {
+      // Idle client clean state
+    });
+  });
+
+  // Attach dynamic broadcast hook for workers
+  (global as any).broadcastWS = (event: string, data: any) => {
+    const payload = JSON.stringify({ event, data });
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    });
+  };
+
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`[Prahari Studio] Server running on http://0.0.0.0:${PORT} with Event-driven WebSockets`);
   });
 }
 

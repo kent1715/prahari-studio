@@ -36,6 +36,7 @@ export interface Project {
   niche: string;
   style: VideoStyle;
   language: string;
+  videoDuration?: number; // Estimated full video duration in seconds (e.g. 30, 60, 120, 180)
   status: "draft" | "generating" | "ready" | "completed";
   script?: {
     hook: string;

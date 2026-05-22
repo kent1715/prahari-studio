@@ -141,6 +141,7 @@ export default function VideoGenerator({
           style: project.style,
           language: project.language,
           voiceEmotion: project.voiceEmotion,
+          videoDuration: project.videoDuration || 60,
           llmProvider: project.llmProvider,
           ollamaUrl: project.ollamaUrl,
           ollamaModel: project.ollamaModel
@@ -192,6 +193,8 @@ export default function VideoGenerator({
         body: JSON.stringify({
           fullText,
           style: project.style,
+          videoDuration: project.videoDuration || 60,
+          sceneDuration: selectedDuration,
           llmProvider: project.llmProvider,
           ollamaUrl: project.ollamaUrl,
           ollamaModel: project.ollamaModel
@@ -267,25 +270,41 @@ export default function VideoGenerator({
 
   // 7. Simulating single scene rendering on local GPU with actual WAN 2.2 triggering
   const handleRenderScene = async (sceneId: string) => {
-    setRenderingSceneId(sceneId);
-
     const targetScene = storyboardScenes.find(s => s.id === sceneId);
     if (!targetScene) return;
 
-    // Push into global UI queue monitor
+    const promptText = targetScene.imagePrompt || targetScene.description;
+
+    // Push into real backend queue and worker loop
     onAddQueue({
       projectId: project.id,
       projectTitle: project.title,
       sceneId: sceneId,
+      sceneNumber: targetScene.sceneNumber,
+      prompt: promptText,
+      style: project.style,
       type: "video_generation",
       vramRequiredGb: 12.8,
       gpuId: 0
     });
 
+    // Set local state to generating instantly to activate UI loaders
+    const initialGeneratingState = storyboardScenes.map((sz) => {
+      if (sz.id === sceneId) {
+        return {
+          ...sz,
+          videoStatus: "generating" as const,
+          videoProgress: 0
+        };
+      }
+      return sz;
+    });
+    setStoryboardScenes(initialGeneratingState);
+    onUpdateProject({ ...project, storyboard: initialGeneratingState });
+
     // Kirim request render sungguhan langsung dari browser ke localhost (Client-Side Direct Dispatch)
     // Ini mengizinkan bypass cloud barrier karena browser berjalan di PC local Anda yang bisa menjangkau 127.0.0.1 dengan andal
     const wanHost = project.wanUrl || "http://127.0.0.1:7860";
-    const promptText = targetScene.imagePrompt || targetScene.description;
     const isComfy = wanHost.includes("8188") || wanHost.toLowerCase().includes("comfy");
 
     try {
@@ -402,36 +421,6 @@ export default function VideoGenerator({
         showToast("Gagal menyambungkan perintah render, silakan periksa status terminal lokal Anda.", "error");
       }
     }
-
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 10;
-      const updated = storyboardScenes.map((sz) => {
-        if (sz.id === sceneId) {
-          const isReady = progress >= 100;
-          return {
-            ...sz,
-            videoStatus: isReady ? "ready" : "generating",
-            videoProgress: Math.min(100, progress),
-            videoUrl: isReady
-              ? SAMPLE_VIDEOS[(sz.sceneNumber - 1) % SAMPLE_VIDEOS.length]
-              : sz.videoUrl
-          };
-        }
-        return sz;
-      });
-      setStoryboardScenes(updated);
-
-      if (progress >= 100) {
-        clearInterval(interval);
-        setRenderingSceneId(null);
-        // Save to project list
-        onUpdateProject({
-          ...project,
-          storyboard: updated
-        });
-      }
-    }, 400);
   };
 
   // 8. Auto split and speak scene narration on browser using custom TTS API or Speech synthesis
@@ -562,7 +551,28 @@ export default function VideoGenerator({
             </div>
 
             <div>
-              <label className="block text-[11px] font-mono text-neutral-400 mb-1.5 uppercase">Lama Video / Scene</label>
+              <label className="block text-[11px] font-mono text-neutral-400 mb-1.5 uppercase">DURASI VIDEO</label>
+              <select
+                className="w-full bg-[#1c1c21] border border-[#2d2d37] focus:border-cyan-500 rounded-lg px-3 py-2 text-white focus:outline-none"
+                value={project.videoDuration || 60}
+                onChange={(e) => {
+                  const d = parseInt(e.target.value);
+                  onUpdateProject({ ...project, videoDuration: d });
+                }}
+              >
+                <option value={30}>30 Detik (Shorts / Sedikit Scene)</option>
+                <option value={60}>60 Detik / 1 Menit (Standar)</option>
+                <option value={120}>120 Detik / 2 Menit (Sedang)</option>
+                <option value={180}>180 Detik / 3 Menit (Panjang)</option>
+                <option value={300}>300 Detik / 5 Menit (Dokumenter Lengkap)</option>
+              </select>
+              <p className="mt-1 text-[10px] text-neutral-500 leading-normal">
+                Semakin lama durasi video, skrip kata akan semakin banyak/panjang dan jumlah scene video yang dirender juga bertambah.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-mono text-neutral-400 mb-1.5 uppercase">DURASI SCENE</label>
               <select
                 className="w-full bg-[#1c1c21] border border-[#2d2d37] focus:border-cyan-500 rounded-lg px-3 py-2 text-white focus:outline-none"
                 value={selectedDuration}

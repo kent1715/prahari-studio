@@ -9,6 +9,7 @@ interface DashboardProps {
   onSelectProject: (p: Project) => void;
   onDeleteProject: (id: string) => void;
   onClearQueue: () => void;
+  metrics: SystemMetrics;
 }
 
 export default function Dashboard({
@@ -18,163 +19,13 @@ export default function Dashboard({
   onSelectProject,
   onDeleteProject,
   onClearQueue,
+  metrics,
 }: DashboardProps) {
-  const [metrics, setMetrics] = useState<SystemMetrics>({
-    gpuList: [
-      {
-        id: 0,
-        name: "NVIDIA RTX A2000 (Local Host)",
-        utilization: 0,
-        vramUsed: 0,
-        vramTotal: 12.0,
-        temperature: 0,
-        powerDraw: 0,
-      }
-    ],
-    storageUsedGb: 412.8,
-    storageTotalGb: 2000.0,
-    cpuUtilization: 0,
-    ramUsedGb: 0,
-    ramTotalGb: 64.0,
-  });
-
   const [quickNiche, setQuickNiche] = useState("Sejarah Kuno");
   const [quickStyle, setQuickStyle] = useState("documentary");
-  const [isLoadingMetrics, setIsLoadingMetrics] = useState(false);
-
-  // Fetch metrics from backend
-  const fetchMetrics = async () => {
-    try {
-      const res = await fetch("/api/metrics");
-      if (res.ok) {
-        const data = await res.json();
-        setMetrics(data);
-      }
-    } catch (e) {
-      // Flashing simulated local metrics
-      const randUtil = Math.round(15 + Math.random() * 20);
-      setMetrics((prev) => ({
-        ...prev,
-        cpuUtilization: Math.round(12 + Math.random() * 10),
-        gpuList: prev.gpuList.map((g) => ({
-          ...g,
-          utilization: randUtil,
-          vramUsed: parseFloat((6.5 + Math.random() * 1.5).toFixed(2)),
-          temperature: Math.round(58 + Math.random() * 3),
-          powerDraw: Math.round(180 + Math.random() * 40),
-        })),
-        ramUsedGb: parseFloat((18.1 + Math.random() * 0.8).toFixed(1)),
-      }));
-    }
-  };
-
-  useEffect(() => {
-    fetchMetrics();
-    const interval = setInterval(fetchMetrics, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const activeGpu = metrics.gpuList[0] || {
-    name: "NVIDIA RTX GeForce",
-    utilization: 12,
-    vramUsed: 4.5,
-    vramTotal: 24.0,
-    temperature: 55,
-    powerDraw: 150
-  };
 
   return (
     <div id="dashboard-container" className="space-y-6">
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* GPU core utilization */}
-        <div id="metric-gpu" className="bg-[#121214] border border-[#232329] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-neutral-400 text-xs font-mono uppercase tracking-wider">
-            <span>GPU UTILIZATION</span>
-            <Cpu className="h-4 w-4 text-[#ff5a1f]" />
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-mono font-medium text-white">{activeGpu.utilization}%</span>
-            <span className="text-xs text-neutral-400 font-mono">RTX A2000</span>
-          </div>
-          <div className="mt-4 w-full bg-neutral-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className={`h-full duration-500 ease-in-out ${
-                activeGpu.utilization > 85 ? "bg-red-500" : activeGpu.utilization > 50 ? "bg-amber-500" : "bg-[#ff5a1f]"
-              }`}
-              style={{ width: `${activeGpu.utilization}%` }}
-            />
-          </div>
-          <div className="mt-2 flex justify-between text-[11px] font-mono text-neutral-500">
-            <span>TEMP: {activeGpu.temperature}°C</span>
-            <span>PWR: {activeGpu.powerDraw}W</span>
-          </div>
-        </div>
-
-        {/* VRAM widget */}
-        <div id="metric-vram" className="bg-[#121214] border border-[#232329] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-neutral-400 text-xs font-mono uppercase tracking-wider">
-            <span>VRAM FOOTPRINT</span>
-            <Layers className="h-4 w-4 text-cyan-500" />
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-mono font-medium text-white">{activeGpu.vramUsed.toFixed(1)} GB</span>
-            <span className="text-xs text-neutral-400 font-mono">/ {activeGpu.vramTotal} GB</span>
-          </div>
-          <div className="mt-4 w-full bg-neutral-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="h-full bg-cyan-500 duration-500"
-              style={{ width: `${(activeGpu.vramUsed / activeGpu.vramTotal) * 100}%` }}
-            />
-          </div>
-          <div className="mt-2 text-[11px] font-mono text-neutral-500">
-            WAN 2.2 model loaded in FP16 low-VRAM weights
-          </div>
-        </div>
-
-        {/* Storage card */}
-        <div id="metric-storage" className="bg-[#121214] border border-[#232329] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-neutral-400 text-xs font-mono uppercase tracking-wider">
-            <span>LOCAL MEMORY</span>
-            <HardDrive className="h-4 w-4 text-emerald-500" />
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-mono font-medium text-white">{(metrics.storageUsedGb).toFixed(1)} GB</span>
-            <span className="text-xs text-neutral-400 font-mono">/ {metrics.storageTotalGb} GB</span>
-          </div>
-          <div className="mt-4 w-full bg-neutral-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="h-full bg-emerald-500"
-              style={{ width: `${(metrics.storageUsedGb / metrics.storageTotalGb) * 100}%` }}
-            />
-          </div>
-          <div className="mt-2 text-[11px] font-mono text-neutral-500">
-            Temp checkpoints: {projects.length} working draft folders
-          </div>
-        </div>
-
-        {/* Unified CPU / System health */}
-        <div id="metric-cpu" className="bg-[#121214] border border-[#232329] rounded-xl p-4 flex flex-col justify-between">
-          <div className="flex items-center justify-between text-neutral-400 text-xs font-mono uppercase tracking-wider">
-            <span>SYSTEM OVERHEAD</span>
-            <Sliders className="h-4 w-4 text-violet-500" />
-          </div>
-          <div className="mt-4 flex items-baseline gap-2">
-            <span className="text-3xl font-mono font-medium text-white">{metrics.cpuUtilization}%</span>
-            <span className="text-xs text-neutral-400 font-mono">CPU (32-Core)</span>
-          </div>
-          <div className="mt-4 w-full bg-neutral-800 rounded-full h-1.5 overflow-hidden">
-            <div
-              className="h-full bg-violet-600"
-              style={{ width: `${metrics.cpuUtilization}%` }}
-            />
-          </div>
-          <div className="mt-2 text-[11px] font-mono text-neutral-500">
-            RAM: {metrics.ramUsedGb} GB used / {metrics.ramTotalGb} GB total
-          </div>
-        </div>
-      </div>
-
       {/* Main Panel Content */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Project List Directory */}
