@@ -87,6 +87,7 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
     const wanUrl = project.wanUrl || "http://127.0.0.1:7860";
     
     try {
+      // 1. Coba melalui server proxy cloud
       const res = await fetch("/api/check-wan-status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,13 +101,32 @@ export default function SettingsPanel({ project, onUpdateProject }: SettingsPane
           statusCode: data.statusCode,
           message: data.message
         });
-      } else {
-        throw new Error(data.message || "Timeout");
+        setCheckingWan(false);
+        return;
       }
-    } catch (err: any) {
+    } catch (err: any) {}
+
+    // 2. Jika server gagal (pasti terjadi untuk localhost karena server ada di cloud), coba uji LANGSUNG dari browser klien
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1800);
+      
+      // Mode no-cors dpt mendeteksi apakah host merespon/terbuka, meskipun browser memblokir pembacaan body karena aturan CORS
+      await fetch(wanUrl, {
+        method: "GET",
+        mode: "no-cors",
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      setWanStatus({
+        active: true,
+        message: `Terhubung Langsung! Browser Anda berhasil menjangkau mesin lokal Anda di ${wanUrl}. Sinyal terminal responsif.`
+      });
+    } catch (clientErr: any) {
       setWanStatus({
         active: false,
-        message: err.message || `Gagal terhubung ke host WAN 2.2. Pastikan webui/api server eksternal Anda menyala.`
+        message: `Gagal terhubung dari server cloud maupun browser Anda. Pastikan software (Gradio/ComfyUI/WebUI) menyala di PC Anda pada alamat "${wanUrl}" dan aktifkan fitur API.`
       });
     } finally {
       setCheckingWan(false);

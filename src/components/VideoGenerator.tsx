@@ -282,22 +282,125 @@ export default function VideoGenerator({
       gpuId: 0
     });
 
-    // Kirim request render sungguhan ke endpoint lokal WAN Desktop via express server proxy
+    // Kirim request render sungguhan langsung dari browser ke localhost (Client-Side Direct Dispatch)
+    // Ini mengizinkan bypass cloud barrier karena browser berjalan di PC local Anda yang bisa menjangkau 127.0.0.1 dengan andal
+    const wanHost = project.wanUrl || "http://127.0.0.1:7860";
+    const promptText = targetScene.imagePrompt || targetScene.description;
+    const isComfy = wanHost.includes("8188") || wanHost.toLowerCase().includes("comfy");
+
     try {
-      await fetch("/api/render-wan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          wanUrl: project.wanUrl,
-          prompt: targetScene.imagePrompt || targetScene.description,
-          sceneId: targetScene.id,
-          sceneNumber: targetScene.sceneNumber,
-          style: project.style,
-          aspectRatio
-        })
-      });
-    } catch (e) {
-      console.warn("Gagal mengirim request render jarak jauh ke WAN Desktop:", e);
+      if (isComfy) {
+        const payload = {
+          client_id: "ais-video-generator",
+          prompt: {
+            "3": {
+              "class_type": "KSampler",
+              "inputs": {
+                "seed": Math.floor(Math.random() * 1000000),
+                "steps": 25,
+                "cfg": 6.0,
+                "sampler_name": "uni_pc",
+                "scheduler": "normal",
+                "denoise": 1.0,
+                "model": ["4", 0],
+                "positive": ["6", 0],
+                "negative": ["7", 0],
+                "latent_image": ["5", 0]
+              }
+            },
+            "4": {
+              "class_type": "CheckoutWAN22Model",
+              "inputs": { "model_name": "wan2.1_t2v_1.3b_fp16.safetensors" }
+            },
+            "5": {
+              "class_type": "EmptyWan22LatentImage",
+              "inputs": { 
+                "width": aspectRatio === "9:16" ? 480 : 832, 
+                "height": aspectRatio === "9:16" ? 832 : 480, 
+                "length": 81, 
+                "batch_size": 1 
+              }
+            },
+            "6": {
+              "class_type": "Wan22TextEncode",
+              "inputs": { "text": promptText, "clip": ["4", 1] }
+            },
+            "7": {
+              "class_type": "Wan22TextEncode",
+              "inputs": { "text": "low quality, blurry, static, noisy, deformed", "clip": ["4", 1] }
+            },
+            "8": {
+              "class_type": "Wan22Decode",
+              "inputs": { "samples": ["3", 0], "vae": ["4", 2] }
+            },
+            "9": {
+              "class_type": "SaveVideo",
+              "inputs": { "images": ["8", 0], "filename_prefix": `wan22_scene_${targetScene.sceneNumber}` }
+            }
+          }
+        };
+        
+        await fetch(`${wanHost}/prompt`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          mode: "cors"
+        });
+        showToast(`Sukses kirim instruksi render Scene #${targetScene.sceneNumber} ke ComfyUI lokal!`);
+      } else {
+        // Gradio 7860 format
+        const payload = {
+          data: [
+            promptText,
+            "low quality, blurry, static, deformed",
+            aspectRatio,
+            5,
+            Math.floor(Math.random() * 1000000),
+            30,
+            6.0
+          ],
+          fn_index: 0,
+          trigger_id: 11
+        };
+
+        try {
+          await fetch(`${wanHost}/api/predict`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            mode: "cors"
+          });
+        } catch (gradErr) {
+          // Fallback ke run endpoint
+          await fetch(`${wanHost}/run/predict`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            mode: "cors"
+          });
+        }
+        showToast(`Sukses kirim instruksi render Scene #${targetScene.sceneNumber} ke Gradio lokal!`);
+      }
+    } catch (directErr: any) {
+      console.warn("Direct connection failed or blocked. Sending via hybrid cloud proxy backup...", directErr);
+      
+      try {
+        await fetch("/api/render-wan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            wanUrl: wanHost,
+            prompt: promptText,
+            sceneId: targetScene.id,
+            sceneNumber: targetScene.sceneNumber,
+            style: project.style,
+            aspectRatio
+          })
+        });
+        showToast(`Instruksi render Scene #${targetScene.sceneNumber} dikirim via proxy backup!`);
+      } catch (proxyErr) {
+        showToast("Gagal menyambungkan perintah render, silakan periksa status terminal lokal Anda.", "error");
+      }
     }
 
     let progress = 0;
